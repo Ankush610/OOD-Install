@@ -1,0 +1,3 @@
+# use the IP so the OOD proxy and training nodes can reach it without DNS
+host=$(hostname -I | awk '{print $1}')
+port=$(find_port "$host")

@@ -1,0 +1,18 @@
+<p><strong>Tracking URI</strong> (use inside cluster jobs, not from your laptop):</p>
+<div class="input-group mb-3">
+  <input type="text" class="form-control font-monospace" readonly
+         value="export MLFLOW_TRACKING_URI=http://<%= host %>:<%= port %>/node/<%= host %>/<%= port %>">
+  <button class="btn btn-outline-secondary" type="button"
+          onclick="navigator.clipboard.writeText(this.previousElementSibling.value); this.textContent='Copied';">Copy</button>
+</div>
+
+<form method="post" action="/pun/sys/mlflow_gc/"
+      onsubmit="return confirm('Permanently delete all runs and experiments in the MLflow trash? This cannot be undone.');"
+      style="display:flex;align-items:center;gap:10px;background:#fff3e0;border:1px solid #ffcc80;border-left:4px solid #fb8c00;border-radius:6px;padding:10px 14px;margin-bottom:1rem;">
+  <span title="Deleting an experiment in the MLflow UI only moves it to the trash. Its name stays taken, so you cannot create a new experiment with the same name. Clean removes trashed runs and experiments for good."
+        style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#fb8c00;color:#fff;font:italic 700 12px Georgia,serif;cursor:help;flex:none;">i</span>
+  <span style="flex:1;">Permanently remove deleted runs and experiments</span>
+  <button type="submit" class="btn btn-sm btn-warning">Clean</button>
+</form>
+
+<a class="btn btn-primary" href="/node/<%= host %>/<%= port %>/" target="_blank">Open MLflow</a>

@@ -1,0 +1,6 @@
+---
+name: MLflow
+category: Interactive Apps
+subcategory: Servers
+role: batch_connect
+description: MLflow UI on your own $HOME/mlflow/mlflow.db

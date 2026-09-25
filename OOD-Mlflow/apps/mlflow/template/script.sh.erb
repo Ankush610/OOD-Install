@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+source /home/apps/mlflow-venv/bin/activate
+mkdir -p "$HOME/mlflow"
+exec mlflow server \
+  --backend-store-uri "sqlite:///$HOME/mlflow/mlflow.db" \
+  --artifacts-destination "$HOME/mlflow/artifacts" \
+  --host 0.0.0.0 --port "$port" \
+  --static-prefix "/node/$host/$port" \
+  --workers 1 \
+  --allowed-hosts "*"

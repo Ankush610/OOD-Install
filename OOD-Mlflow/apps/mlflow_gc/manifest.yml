@@ -1,0 +1,3 @@
+---
+name: MLflow cleanup
+description: Backend for the Clean button on the MLflow session card

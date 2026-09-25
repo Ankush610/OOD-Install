@@ -1,0 +1,6 @@
+cluster: "dummy"
+form:
+  - bc_num_hours
+attributes:
+  bc_num_hours:
+    value: 4
