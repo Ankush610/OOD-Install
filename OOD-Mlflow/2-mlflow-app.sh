@@ -3,7 +3,7 @@
 # Run on master, from this folder: sudo bash 2-mlflow-app.sh
 set -euo pipefail
 
-CLUSTER_ID=dummy                  # same as CLUSTER_ID in OOD-Setup/setup-ood.sh
+CLUSTER_ID=aistack                  # same as CLUSTER_ID in OOD-Setup/setup-ood.sh
 MLFLOW_VERSION=3.15.1             # keep >= the mlflow-skinny version in training containers
 VENV=/home/apps/mlflow-venv       # referenced by apps/mlflow/template/script.sh.erb and apps/mlflow_gc
 APPS=/var/www/ood/apps/sys
