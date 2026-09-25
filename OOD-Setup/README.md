@@ -15,7 +15,8 @@ sudo bash setup-ood.sh     # asks once for the web password of OOD_USER
 |---|---|---|
 | `SERVERNAME` | `localhost` | the exact host in the browser URL |
 | `OOD_USER` | `admin` | a real Linux user |
-| `CLUSTER_ID` | `dummy` | cluster file name. Apps use it in `form.yml` |
+| `CLUSTER_ID` | `dummy` | cluster file name and ID. Must match `CLUSTER_ID` in `OOD-Mlflow/2-mlflow-app.sh` |
+| `CLUSTER_TITLE` | `Dummy Cluster` | the name users see in the Clusters menu |
 | `SLURM_BIN` | `/usr/local/bin` | `which sbatch` |
 | `SLURM_CONF` | `/etc/slurm/slurm.conf` | `echo $SLURM_CONF` |
 
@@ -24,7 +25,7 @@ sudo bash setup-ood.sh     # asks once for the web password of OOD_USER
 1. Adds the repos (CRB, EPEL, Ruby 3.3, Node.js 22, the OOD release RPM) and installs `ondemand`
 2. Makes a self-signed certificate and the htpasswd login
 3. Writes `/etc/ood/config/ood_portal.yml` (the original is kept as `.orig`): HTTPS, login, and the `/node` proxy for apps
-4. Writes `/etc/ood/config/clusters.d/dummy.yml` so OOD can submit Slurm jobs
+4. Writes `/etc/ood/config/clusters.d/<CLUSTER_ID>.yml` so OOD can submit Slurm jobs
 5. Starts `httpd`, opens HTTPS in the firewall, and checks with `curl`
 
 **Success looks like this:** `/` returns **302** and `/pun/sys/dashboard` returns **401**. 401 means "log in first".
@@ -44,5 +45,7 @@ Add more web users with `sudo htpasswd /etc/ood/htpasswd <user>`. Leave out `-c`
 | `Problem talking to database ... 'cluster' can't be reached` | a `cluster:` line makes OOD use `--clusters`, which needs `slurmdbd` | remove the `cluster:` line |
 | `sbatch: command not found` | wrong `bin:` | `bin:` = folder of `which sbatch` |
 | a config change has no effect | OOD caches config per user | **Restart Web Server** (top-right menu) |
+
+**Renaming the cluster:** set `CLUSTER_ID` and `CLUSTER_TITLE` here and `CLUSTER_ID` in `2-mlflow-app.sh`, delete the old `clusters.d/<old>.yml`, rerun both scripts, then click Restart Web Server.
 
 For real users, replace htpasswd with Dex + LDAP, and use a real hostname and certificate.

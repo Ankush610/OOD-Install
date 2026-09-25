@@ -26,7 +26,7 @@ To change the app, edit the files in `apps/`, then rerun `2-mlflow-app.sh`.
 
 | File | Job |
 |---|---|
-| `apps/mlflow/form.yml` | launch form (hours). `cluster: "dummy"` must match the cluster file name |
+| `apps/mlflow/form.yml` | launch form (hours). `cluster:` is filled in from `CLUSTER_ID` in `2-mlflow-app.sh` |
 | `apps/mlflow/submit.yml.erb` | Slurm: `-p viewer --cpus-per-task=1 --mem=2G` |
 | `apps/mlflow/template/before.sh.erb` | picks the node IP and a free port |
 | `apps/mlflow/template/script.sh.erb` | `mlflow server` on `~/mlflow` (must stay executable) |

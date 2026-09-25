@@ -6,7 +6,8 @@ set -euo pipefail
 OOD_VERSION=4.2
 SERVERNAME=localhost              # the exact host users type in the browser
 OOD_USER=admin                    # first web login, must be a real Linux user
-CLUSTER_ID=dummy                  # cluster file name, apps refer to it in form.yml
+CLUSTER_ID=dummy                  # cluster file name + ID, apps refer to it in form.yml
+CLUSTER_TITLE="Dummy Cluster"     # name users see in the Clusters menu
 LOGIN_HOST=master
 SLURM_BIN=/usr/local/bin          # folder of sbatch (`which sbatch`)
 SLURM_CONF=/etc/slurm/slurm.conf  # `echo $SLURM_CONF`
@@ -64,7 +65,7 @@ mkdir -p /etc/ood/config/clusters.d
 cat > "/etc/ood/config/clusters.d/${CLUSTER_ID}.yml" <<EOF
 v2:
   metadata:
-    title: "Dummy Cluster"
+    title: "${CLUSTER_TITLE}"
   login:
     host: "${LOGIN_HOST}"
   job:
