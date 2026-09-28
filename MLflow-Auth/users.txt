@@ -1,0 +1,4 @@
+# One user per line:  username:password
+# Lines starting with # are ignored. Keep this file chmod 600.
+alice:change-me-alice
+bob:change-me-bob
