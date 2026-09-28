@@ -10,6 +10,7 @@ laptop ──ssh──> network-node (10.208.34.138) ──ssh──> master (OO
 |---|---|
 | [OOD-Setup](OOD-Setup/README.md) | OOD web portal on master: packages, test login, SSL, Slurm cluster file |
 | [OOD-Mlflow](OOD-Mlflow/README.md) | `viewer` Slurm partition on master, shared MLflow, the MLflow app with Copy + Clean buttons |
+| [MLflow-Auth](MLflow-Auth/README.md) | ONE shared MLflow with login on k8s (podman image, user sync, OOD page) |
 
 ## Run order (on master, as root)
 

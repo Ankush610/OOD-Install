@@ -1,0 +1,5 @@
+---
+name: MLflow (shared)
+category: Interactive Apps
+subcategory: Servers
+description: Shared MLflow server on Kubernetes, you see only your own experiments

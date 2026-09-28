@@ -76,4 +76,4 @@ Afterwards, run the `curl` check above again and watch memory with `sstat -j <jo
 | Clean: "No running MLflow session" | no session answering | launch MLflow, then Clean |
 | `Security middleware ... localhost-only` | `--allowed-hosts` missing | keep `--allowed-hosts "*"` in `script.sh.erb` |
 
-**Known gap (test setup):** MLflow has no login, and anyone on `192.168.40.x` who guesses the IP and port can open another user's MLflow. Add MLflow auth after OOD moves to Dex, because it would clash with the htpasswd login.
+**Known gap (test setup):** MLflow has no login, and anyone on `192.168.40.x` who guesses the IP and port can open another user's MLflow. The shared MLflow with login in [`../MLflow-Auth`](../MLflow-Auth/README.md) replaces this app.

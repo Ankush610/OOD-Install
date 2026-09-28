@@ -52,7 +52,14 @@ After you change any app or config file on the server, click **Restart Web Serve
 - Scripts use `set -euo pipefail`, keep their config variables at the top, and print numbered `== N.` steps with a final check (`curl` status codes, `sinfo`/`srun`).
 - `# ponytail:` comments mark deliberate shortcuts that have a known limit.
 - The READMEs keep a Symptom | Cause | Fix troubleshooting table. When you fix a new failure mode, add a row.
-- Known gap: MLflow has no auth, so anyone on 192.168.40.x can reach another user's session. The plan is to add MLflow auth after OOD moves from htpasswd to Dex.
+- Known gap: the per-user Slurm MLflow (`OOD-Mlflow`) has no auth, so anyone on 192.168.40.x can reach another user's session. `MLflow-Auth` is the replacement with login.
+
+## MLflow-Auth (shared MLflow with login, on k8s)
+
+- One `mlflow server --app-name basic-auth` pod, namespace `mlflow`, pinned to master (the login node), hostPath `/home/apps/mlflow-shared`, NodePort `30500`. Not a Slurm job: slurm-bridge only manages namespace `slurm-bridge`.
+- Tracking URI `http://192.168.40.102:30500/node/192.168.40.102/30500`. The `/node/...` prefix is kept so the URI matches the old app's shape; it's `--static-prefix`, the probes and every script.
+- `mlflow-auth/users.txt` (git-ignored) -> `sync-users.sh` sets the MLflow user, the OOD htpasswd and `~user/.mlflow/credentials`. MLflow passwords need 12+ characters. Linux users must exist on master AND every compute node with the same UID/GID.
+- OOD's `/node` proxy strips the `Authorization` header (forwards only `X-Forwarded-User`), so the MLflow UI can't be opened through OOD. The OOD page links to port 30500 directly; the laptop tunnel needs `-L 30500:192.168.40.102:30500`. Don't trust `X-Forwarded-User` in MLflow: anyone who reaches 30500 could spoof it.
 
 ## Sibling repo
 
