@@ -1,0 +1,6 @@
+# The node's IP, so OOD's /rnode proxy can reach it without DNS; a free port; a password only
+# this session's owner sees (OOD puts it in the Connect button). code-server reads $PASSWORD.
+host=$(hostname -I | awk '{print $1}')
+port=$(find_port "$host")
+password=$(create_passwd 16)
+export PASSWORD="$password"

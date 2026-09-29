@@ -4,63 +4,63 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Idempotent root bash scripts that install Open OnDemand 4.2 on a Slurm cluster's `master` node (AlmaLinux 9), plus an OOD Batch Connect app that gives each user their own MLflow server. Nothing builds or runs locally. The scripts are copied to `master` and run there as root, so you can't test them from this machine.
+Idempotent root bash scripts that set up, on a fresh Slurm + Kubernetes cluster (AlmaLinux 9): LDAP for users (389 DS on master + SSSD everywhere), Open OnDemand 4.2 logging in against it, and ONE shared MLflow server with LDAP login on k8s. The scripts run on the cluster's `master` node, mostly as root, and can't be tested from a laptop.
 
-Topology: laptop → `network-node` (10.208.34.138) → `master` (OOD, Slurm controller, MLflow sessions) + `cn01`/`cn02` (training). Access is through `sudo ssh -J ankush@10.208.34.138 -L 443:localhost:443 admin@master`, then `https://localhost`. The local port must be 443 because OOD redirects every other port.
+This cluster: laptop → `network-node` (10.208.34.138) → `master` (192.168.40.102: LDAP, OOD, MLflow pod, Slurm controller, k8s control plane, registry `master:5000`) + `cn01`/`cn02` (training). Access: `sudo ssh -J ankush@10.208.34.138 -L 443:localhost:443 -L 30500:192.168.40.102:30500 admin@master`, then `https://localhost`.
 
-## Commands
+## Layout and run order
 
-Run order on master (all scripts can be rerun safely):
-```bash
-sudo bash OOD-Setup/setup-ood.sh
-sudo bash OOD-Mlflow/1-slurm-viewer.sh
-sudo bash OOD-Mlflow/2-mlflow-app.sh
-sudo bash OOD-Mlflow/remove-mlflow.sh [--restore]   # move app + venv to ~/temp-backup for a clean-reinstall test
+`site.conf` holds **every** site value; every script does `source "$HERE/../site.conf"`. Never hardcode an IP, hostname, base DN, port or path in a script. Add it to `site.conf`.
+
+```
+1-ldap/1-server.sh          master: 389 DS, tree, ACIs, CA -> LDAP_CA (shared /home)
+1-ldap/import-local-users.sh  optional: local users -> LDAP, same UID + password hash
+1-ldap/2-client.sh          every node: UID clash check, SSSD, authselect
+1-ldap/add-user.sh          new person (replaces useradd), also runs 3-mlflow/3-sync-tokens.sh
+2-ood/setup-ood.sh          OOD, AuthBasicProvider "ldap file", self-signed cert, Slurm cluster file
+3-mlflow/1-build-image.sh   image/ -> MLFLOW_IMAGE (no root)
+3-mlflow/2-deploy.sh        mlflow system user, data dir, basic_auth.ini, envsubst mlflow.yaml | kubectl apply
+3-mlflow/3-sync-tokens.sh   job token per LDAP user in ~/.mlflow/credentials
+3-mlflow/4-install-ood-app.sh  Passenger page + site.json -> /var/www/ood/apps/sys/mlflow_k8s
+4-vscode/1-install-code-server.sh  release tarball -> CODE_SERVER_ROOT/<ver>, current symlink (shared /home)
+4-vscode/2-slurm-viewer.sh  viewer partition on master, OverSubscribe=FORCE:n, slurm.conf to every node
+4-vscode/3-install-ood-app.sh  envsubst ood-app/vscode -> /var/www/ood/apps/sys/vscode (Batch Connect)
 ```
 
-There are no tests or linters. Local sanity checks:
+Local sanity checks (no tests or linters):
 ```bash
-bash -n OOD-Setup/setup-ood.sh OOD-Mlflow/*.sh
-python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' OOD-Mlflow/apps/mlflow_gc/passenger_wsgi.py
+bash -n */*.sh
+( cd 4-vscode/ood-app/vscode && ruby -ryaml -e 'YAML.load_file("form.yml")' )
+python3 -c 'import ast,sys; [ast.parse(open(f).read()) for f in sys.argv[1:]]' 3-mlflow/image/ldap_auth.py 3-mlflow/ood-app/mlflow_k8s/passenger_wsgi.py
+( set -a; source site.conf; envsubst < 3-mlflow/mlflow.yaml ) | kubectl apply --dry-run=server -f -
 ```
-After you change any app or config file on the server, click **Restart Web Server** in OOD. OOD caches config per user.
 
-## Architecture
+## Design decisions (don't undo without a reason)
 
-- **`OOD-Setup/setup-ood.sh`** writes `/etc/ood/config/ood_portal.yml` (htpasswd auth, self-signed cert, `node_uri: /node` proxy) and `/etc/ood/config/clusters.d/<CLUSTER_ID>.yml` (Slurm adapter with explicit `bin:`/`conf:`). Don't add a `cluster:` line to the cluster file. It makes OOD pass `--clusters`, which needs slurmdbd.
-- **`OOD-Mlflow/1-slurm-viewer.sh`** adds `master` to `slurm.conf` as partition `viewer`, scps the file to the compute nodes, and restarts the daemons. MLflow sessions run there, so they never take up training nodes.
-- **`OOD-Mlflow/2-mlflow-app.sh`** builds the shared venv `/home/apps/mlflow-venv` (Python 3.12, because MLflow ≥ 3.2 needs ≥ 3.10) and copies `apps/*` to `/var/www/ood/apps/sys/`. It rewrites `cluster:` in `form.yml` with `sed` and runs `chmod +x` on `script.sh.erb`. The `cluster:` value in the repo copy of `form.yml` is a placeholder. Edit `apps/`, then rerun the script. Don't edit the deployed copy.
-- **`apps/mlflow`** (Batch Connect): `before.sh.erb` picks the node IP and a free port. `script.sh.erb` runs `mlflow server` on the per-user `~/mlflow/mlflow.db` + `~/mlflow/artifacts`. `view.html.erb` renders the session card.
-- **`apps/mlflow_gc`** (Passenger WSGI, stdlib only) sits behind the card's **Clean** POST. It finds the user's newest session that still answers by reading `~/ondemand/data/sys/dashboard/batch_connect/sys/mlflow/output/*/connection.yml`, lists the trash through the REST API, and then runs `mlflow gc`. It runs as the user in their PUN. `touch passenger_wsgi.py` reloads it.
-
-## Values that must match across files
-
-- `CLUSTER_ID` in `setup-ood.sh` == `CLUSTER_ID` in `2-mlflow-app.sh` (currently `aistack`; the READMEs still say `dummy`).
-- The venv path `/home/apps/mlflow-venv` is hardcoded in `2-mlflow-app.sh`, `script.sh.erb`, `passenger_wsgi.py`, and `remove-mlflow.sh`.
-- Session resources `--mem=2G`/1 CPU in `submit.yml.erb` go with `VIEWER_CPUS`/`VIEWER_MEM_MB` in `1-slurm-viewer.sh`. Change them together.
-- `MLFLOW_VERSION` must be ≥ the `mlflow-skinny` version in the training containers. DB upgrades are one-way.
+- **LDAP decides first everywhere.** OOD uses `AuthBasicProvider ldap file`: Apache stops at the first provider that knows the user, so `file` (htpasswd) only serves `OOD_ADMIN`, which is not in LDAP. `KEEP_LOCAL` accounts stay local as the way back in.
+- **OOD's `/node` proxy strips `Authorization`** (forwards only `X-Forwarded-User`). So the MLflow UI is opened **directly** on `MLFLOW_PORT`, not through OOD, and MLflow must **not** trust `X-Forwarded-User` (anyone reaching the port could spoof it).
+- **MLflow login** (`image/ldap_auth.py`): auth.db password (admin + job tokens) OR LDAP bind. It rejects empty passwords (an empty password is an anonymous bind, which LDAP accepts) and non-Linux usernames (DN injection). The first LDAP login creates the MLflow user. Good binds are cached 5 min in-process (`--workers 1`).
+- **Jobs use tokens, not passwords:** `3-sync-tokens.sh` writes a random token; it survives password changes.
+- **MLflow pod:** namespace `mlflow` (outside slurm-bridge's `managedNamespaces`, so the default scheduler places it with no Slurm time limit), pinned to `MASTER_HOST`, hostPath `MLFLOW_DATA` (SQLite on local disk, not NFS), `runAsUser: MLFLOW_UID` = local system account below `MIN_UID`, never in LDAP. `hostAliases` maps `MASTER_HOST` so `ldaps://` matches the certificate name.
+- **`MLFLOW_PREFIX`** is passed as `MLFLOW_STATIC_PREFIX` (env, empty = none), not `--static-prefix`, so it can be empty. It's part of the tracking URI and the probe paths.
+- **Artifacts go through the server** (`--artifacts-destination`), so permission checks apply to files, and `MLFLOW_DATA` stays mode 700.
+- **VS Code** is a Batch Connect app (Slurm), not k8s: the session must run as the user with their home, which Slurm already does. One code-server install on `/home/apps`; extensions/settings live in each user's `~/.local/share/code-server`. "Editor only" sessions go to `viewer` on master with `OverSubscribe=FORCE:n` (cores shared, memory reserved), so editors never hold compute nodes. Master's `NodeName` line comes from `slurmd -C` (RealMemory at 98%) plus `CoreSpecCount`/`MemSpecLimit`, which keep `VIEWER_RESERVED_*` out of Slurm for SSH users and master's services. `view.html.erb` posts the per-session password through `/rnode` (prefix stripped: code-server wants to sit at `/`). Templates hold `${SITE_VARS}` filled by `envsubst` with an explicit list, so `${port}`/`$HOME` survive. Job templates read form values as `context.<field>`; only `submit.yml.erb` gets bare names. GPU choices (`gpu1`..`gpuN`, one per count) are written into `form.yml` at install from `gpu-detect.sh` (sinfo), because OOD's per-option field hiding (`bc_dynamic_js`) is off by default; `submit.yml.erb` clamps n and requests untyped `--gres=gpu:n`.
+- `sssd.conf` must be `root:root 0600` (explicit `chown`: root's primary group isn't always `root`). `LDAP_DM_PASS_FILE` must have no trailing newline (`ldap* -y` sends it byte for byte).
 
 ## MLflow flags that must stay
 
-- `--static-prefix /node/$host/$port`: the UI and the API both sit behind OOD's proxy path. The tracking URI is the full `http://<ip>:<port>/node/<ip>/<port>`.
-- `--workers 1`: more workers run out of memory at 2 GB.
+- `--workers 1`: more workers run out of memory at 2 GB, and the login cache is per process.
 - `--allowed-hosts "*"`: MLflow 3.x only answers localhost by default.
-- Training containers ship `mlflow-skinny`, which can't open SQLite. Always give clients the HTTP tracking URI.
+- Training containers ship `mlflow-skinny`, which can't open SQLite. Always give clients the HTTP tracking URI. `MLFLOW_VERSION` must be ≥ their version; db upgrades are one-way.
 
 ## Conventions
 
-- Scripts use `set -euo pipefail`, keep their config variables at the top, and print numbered `== N.` steps with a final check (`curl` status codes, `sinfo`/`srun`).
+- Scripts use `set -euo pipefail`, source `site.conf`, print numbered `== N.` steps, and end with a check that says what to expect. Every script is safe to rerun.
+- Secrets never go on a command line: `curl -K <(printf …)`, `ldappasswd -S`, `-y <file>`.
 - `# ponytail:` comments mark deliberate shortcuts that have a known limit.
-- The READMEs keep a Symptom | Cause | Fix troubleshooting table. When you fix a new failure mode, add a row.
-- Known gap: the per-user Slurm MLflow (`OOD-Mlflow`) has no auth, so anyone on 192.168.40.x can reach another user's session. `MLflow-Auth` is the replacement with login.
-
-## MLflow-Auth (shared MLflow with login, on k8s)
-
-- One `mlflow server --app-name basic-auth` pod, namespace `mlflow`, pinned to master (the login node), hostPath `/home/apps/mlflow-shared`, NodePort `30500`. Not a Slurm job: slurm-bridge only manages namespace `slurm-bridge`.
-- Tracking URI `http://192.168.40.102:30500/node/192.168.40.102/30500`. The `/node/...` prefix is kept so the URI matches the old app's shape; it's `--static-prefix`, the probes and every script.
-- `mlflow-auth/users.txt` (git-ignored) -> `sync-users.sh` sets the MLflow user, the OOD htpasswd and `~user/.mlflow/credentials`. MLflow passwords need 12+ characters. Linux users must exist on master AND every compute node with the same UID/GID.
-- OOD's `/node` proxy strips the `Authorization` header (forwards only `X-Forwarded-User`), so the MLflow UI can't be opened through OOD. The OOD page links to port 30500 directly; the laptop tunnel needs `-L 30500:192.168.40.102:30500`. Don't trust `X-Forwarded-User` in MLflow: anyone who reaches 30500 could spoof it.
+- Each folder's README keeps a Symptom | Cause | Fix table. When you hit a new failure mode, add a row.
+- After changing an OOD app or config on the server: **Restart Web Server** in OOD (it caches config per user).
 
 ## Sibling repo
 
-`../AI-stack-Project` holds design notes (`Plans/`) and K8s manifests (`yamls/`) for the wider cluster: Slinky slurm-bridge, DRA GPUs, a `master:5000` registry, and static NFS PVs. `yamls/cluster-conf.txt` records the cluster versions the manifests were tested against.
+`../AI-Stack` holds design notes (`Plans/`, e.g. `model-registry.md`) and k8s manifests (`yamls/`) for the wider cluster: Slinky slurm-bridge, DRA GPUs, the `master:5000` registry, static NFS PVs. `yamls/cluster-conf.txt` records the cluster versions they were tested against.

@@ -1,0 +1,134 @@
+# ONE shared MLflow for all users, as an always-on service on master (the login node), not a Slurm job.
+# TEMPLATE: ${...} come from ../site.conf; 2-deploy.sh fills them in (envsubst) and applies the result.
+# Each user sees only their own experiments/models; people log in with their LDAP password (image/ldap_auth.py).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlflow
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: mlflow
+
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate                              # SQLite: never two servers on the same db
+
+  selector:
+    matchLabels:
+      app: mlflow
+
+  template:
+    metadata:
+      labels:
+        app: mlflow
+
+    spec:
+      nodeSelector:                             # data is on master's local disk
+        kubernetes.io/hostname: ${MASTER_HOST}
+
+      tolerations:                              # run on the control-plane node, and on Slurm-managed
+      - key: node-role.kubernetes.io/control-plane  # nodes if slurm-bridge taints them (harmless otherwise)
+        operator: Exists
+        effect: NoSchedule
+      - key: slinky.slurm.net/managed-node
+        operator: Exists
+        effect: NoExecute
+
+      hostAliases:                              # LDAP_URI's host must match the LDAP TLS certificate's name
+      - ip: ${MASTER_IP}
+        hostnames: [${MASTER_HOST}]
+
+      securityContext:
+        runAsUser: ${MLFLOW_UID}                # owns MLFLOW_DATA (mode 700), made by 2-deploy.sh
+        runAsGroup: ${MLFLOW_UID}
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+
+      containers:
+      - name: mlflow
+        image: ${MLFLOW_IMAGE}
+        imagePullPolicy: IfNotPresent
+
+        args:
+        - "server"
+        - "--app-name"
+        - "basic-auth"
+        - "--backend-store-uri"
+        - "sqlite:////data/mlflow.db"
+        - "--artifacts-destination"             # clients upload/download through the server,
+        - "/data/artifacts"                     # so the permission checks apply to files too
+        - "--host"
+        - "0.0.0.0"
+        - "--port"
+        - "5000"
+        - "--workers"                           # more workers run out of memory at 2 GB
+        - "1"
+        - "--allowed-hosts"                     # MLflow 3.x answers only localhost by default
+        - "*"
+
+        env:
+        - name: MLFLOW_STATIC_PREFIX            # = --static-prefix; empty means none
+          value: "${MLFLOW_PREFIX}"
+        - name: MLFLOW_AUTH_CONFIG_PATH
+          value: /data/basic_auth.ini           # written by 2-deploy.sh
+        - name: MLFLOW_FLASK_SERVER_SECRET_KEY
+          valueFrom:
+            secretKeyRef: { name: mlflow, key: flask-secret-key }
+        - name: LDAP_URI                        # image/ldap_auth.py
+          value: ${LDAP_URI}:636
+        - name: LDAP_BASE
+          value: "${LDAP_BASE}"
+        - name: LDAP_CA
+          value: /etc/mlflow-ldap/ca.crt
+
+        ports:
+        - name: http
+          containerPort: 5000
+
+        readinessProbe:                         # /health skips auth
+          httpGet: { path: "${MLFLOW_PREFIX}/health", port: 5000 }
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet: { path: "${MLFLOW_PREFIX}/health", port: 5000 }
+          initialDelaySeconds: 60
+          periodSeconds: 30
+
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities: { drop: [ALL] }
+
+        resources:
+          requests: { cpu: "1", memory: 1Gi }
+          limits:   { cpu: "2", memory: 2Gi }
+
+        volumeMounts:
+        - { name: data, mountPath: /data }
+        - { name: ldap-ca, mountPath: /etc/mlflow-ldap/ca.crt, readOnly: true }
+
+      volumes:                                  # master's local disk: SQLite is safer here than over NFS
+      - name: data
+        hostPath: { path: "${MLFLOW_DATA}", type: Directory }
+      - name: ldap-ca                           # made by ../1-ldap/1-server.sh
+        hostPath: { path: "${LDAP_CA}", type: File }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  namespace: mlflow
+
+spec:
+  type: NodePort
+  selector:
+    app: mlflow
+  ports:
+  - name: http
+    port: 5000
+    targetPort: 5000
+    nodePort: ${MLFLOW_PORT}

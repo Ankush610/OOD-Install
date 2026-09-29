@@ -1,0 +1,8 @@
+# Pinned MLflow server packages (requirements.txt; 1-build-image.sh --from-venv can regenerate it)
+# plus ldap3 and ldap_auth.py: the LDAP login (basic_auth.ini: authorization_function = ldap_auth:authenticate_request)
+FROM docker.io/library/python:3.12-slim
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt ldap3==2.9.1 && rm /tmp/requirements.txt
+COPY ldap_auth.py /opt/mlflow-ldap/ldap_auth.py
+ENV PYTHONPATH=/opt/mlflow-ldap
+ENTRYPOINT ["mlflow"]

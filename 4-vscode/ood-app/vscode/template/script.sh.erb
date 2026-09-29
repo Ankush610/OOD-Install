@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# VS Code (code-server) as THIS user: it sees exactly what they can see on disk, nothing more.
+# Extensions + settings: ~/.local/share/code-server (theirs, kept between sessions).
+<%- require "shellwords"; d = context.working_dir.to_s.strip -%>
+<%- target = d.empty? ? '"$HOME"' : (d.start_with?("~/") ? '"$HOME"/' + d[2..].shellescape : d.shellescape) -%>
+cd <%= target %> || { echo "Cannot open the folder from the form."; exit 1; }
+# Set inside a VS Code terminal; code-server would then just hand the folder to that editor and exit.
+unset VSCODE_IPC_HOOK_CLI
+exec "${CODE_SERVER_ROOT}/current/bin/code-server" \
+  --auth password \
+  --bind-addr "0.0.0.0:${port}" \
+  --disable-telemetry \
+  --disable-update-check \
+  --disable-workspace-trust \
+  --idle-timeout-seconds ${VSCODE_IDLE_SECONDS} \
+  "$PWD"

@@ -1,0 +1,18 @@
+---
+batch_connect:
+  template: "basic"
+script:
+  native:
+<%- if where.start_with?("gpu") -%>
+<%- n = where.delete_prefix("gpu").to_i.clamp(1, ${GPU_MAX}) -%>
+    - "-p"
+    - "${GPU_PARTITION}"
+    - "--gres=gpu:<%= n %>"
+    - "--cpus-per-task=<%= n * ${CPUS_PER_GPU} %>"
+    - "--mem=<%= n * ${MEM_PER_GPU_MB} %>M"
+<%- else -%>
+    - "-p"
+    - "${VIEWER_PARTITION}"
+    - "--cpus-per-task=1"
+    - "--mem=${VSCODE_MEM}"
+<%- end -%>
