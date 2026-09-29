@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # VS Code (code-server) as THIS user: it sees exactly what they can see on disk, nothing more.
 # Extensions + settings: ~/.local/share/code-server (theirs, kept between sessions).
-<%- require "shellwords"; d = context.working_dir.to_s.strip -%>
-<%- target = d.empty? ? '"$HOME"' : (d.start_with?("~/") ? '"$HOME"/' + d[2..].shellescape : d.shellescape) -%>
-cd <%= target %> || { echo "Cannot open the folder from the form."; exit 1; }
+# Starts in $HOME; VS Code then reopens the last folder you had open (File > Open Folder to change it).
+cd "$HOME"
+# Terminals inside VS Code should behave like an SSH login. This session is itself a Slurm job, so its
+# SLURM_*/SBATCH_* variables would leak into every sbatch/srun typed there and clash with the new job's
+# own (e.g. "SLURM_MEM_PER_CPU ... and SLURM_MEM_PER_NODE are mutually exclusive"). Slurm still ends this job.
+unset $(compgen -v | grep -E '^(SLURM_|SBATCH_|SRUN_|SALLOC_)') 2>/dev/null
 # Set inside a VS Code terminal; code-server would then just hand the folder to that editor and exit.
 unset VSCODE_IPC_HOOK_CLI
 exec "${CODE_SERVER_ROOT}/current/bin/code-server" \
@@ -12,5 +15,4 @@ exec "${CODE_SERVER_ROOT}/current/bin/code-server" \
   --disable-telemetry \
   --disable-update-check \
   --disable-workspace-trust \
-  --idle-timeout-seconds ${VSCODE_IDLE_SECONDS} \
-  "$PWD"
+  --idle-timeout-seconds ${VSCODE_IDLE_SECONDS}
