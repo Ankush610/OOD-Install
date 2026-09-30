@@ -64,7 +64,7 @@ Each folder's README explains its steps and has a Symptom | Cause | Fix table.
 
 | Task | Command (on master) |
 |---|---|
-| add a person | `sudo bash 1-ldap/add-user.sh <name>`: LDAP entry, home, MLflow job token |
+| add a person | `sudo bash 1-ldap/add-user.sh <name>`: LDAP entry, home, rootless-podman subuids, MLflow job token |
 | reset a password | `sudo ldappasswd -x -H ldap://localhost -D "cn=Directory Manager" -y /root/.ldap-dm.pass -S uid=<name>,ou=People,<LDAP_BASE>` |
 | a user changes their own | `passwd` over SSH (SSSD passes it to LDAP) |
 | a new compute node | `sudo bash 1-ldap/2-client.sh` on it |

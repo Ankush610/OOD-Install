@@ -16,7 +16,7 @@ This cluster: laptop → `network-node` (10.208.34.138) → `master` (192.168.40
 1-ldap/1-server.sh          master: 389 DS, tree, ACIs, CA -> LDAP_CA (shared /home)
 1-ldap/import-local-users.sh  optional: local users -> LDAP, same UID + password hash
 1-ldap/2-client.sh          every node: UID clash check, SSSD, authselect
-1-ldap/add-user.sh          new person (replaces useradd), also runs 3-mlflow/3-sync-tokens.sh
+1-ldap/add-user.sh          new person (replaces useradd), subuid/subgid on LOGIN_NODES, also runs 3-mlflow/3-sync-tokens.sh
 2-ood/setup-ood.sh          OOD, AuthBasicProvider "ldap file", self-signed cert, Slurm cluster file
 3-mlflow/1-build-image.sh   image/ -> MLFLOW_IMAGE (no root)
 3-mlflow/2-deploy.sh        mlflow system user, data dir, basic_auth.ini, envsubst mlflow.yaml | kubectl apply
@@ -63,4 +63,4 @@ python3 -c 'import ast,sys; [ast.parse(open(f).read()) for f in sys.argv[1:]]' 3
 
 ## Sibling repo
 
-`../AI-Stack` holds design notes (`Plans/`, e.g. `model-registry.md`) and k8s manifests (`yamls/`) for the wider cluster: Slinky slurm-bridge, DRA GPUs, the `master:5000` registry, static NFS PVs. `yamls/cluster-conf.txt` records the cluster versions they were tested against.
+`../AI-Stack` holds design notes (`Plans/`, e.g. `model-hub.md`, `AI-stack-Cluster-Architecture.md`) and k8s manifests (`yamls/`) for the wider cluster: Slinky slurm-bridge, DRA GPUs, the `master:5000` registry, static NFS PVs. `yamls/cluster-conf.txt` records the cluster versions they were tested against.

@@ -58,7 +58,20 @@ else
   echo "MLflow not answering at $MLFLOW_URI, skipped. Later: sudo bash 3-mlflow/3-sync-tokens.sh"
 fi
 
-echo "== 6. Check"
+echo "== 6. Rootless podman ranges (/etc/subuid, /etc/subgid) on the login nodes"
+# useradd writes these for local users only; LDAP users get none, and rootless podman fails without them.
+# ponytail: next range comes from this node's files; login nodes stay identical as long as only this script writes them
+start=$(awk -F: '{e=$2+$3; if (e>m) m=e} END {print (m>100000 ? m : 100000)}' /etc/subuid /etc/subgid)
+add="for f in /etc/subuid /etc/subgid; do grep -q '^$U:' \$f || echo $U:$start:65536 >> \$f; done"
+for n in $LOGIN_NODES; do
+  if [ "$n" = "$(hostname -s)" ]; then bash -c "$add"
+  elif ! ssh -o ConnectTimeout=5 -o BatchMode=yes "root@$n" "$add"; then
+    echo "NOT on $n (unreachable). Later, as root there: $add" >&2; continue
+  fi
+  echo "$n: $U:$start:65536"
+done
+
+echo "== 7. Check"
 getent passwd "$U" && id "$U"
 echo
 echo "Done. $U logs in everywhere (SSH, Slurm, OOD, MLflow UI) with that password."

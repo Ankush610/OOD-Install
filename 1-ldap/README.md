@@ -24,7 +24,7 @@ sudo bash add-user.sh <name>                 # on master: each new person
 
 `2-client.sh` runs on the compute nodes straight from this folder, because it's on the shared `/home`. It checks for UID clashes before it changes anything, then switches the node to SSSD (`authselect`), and checks with `getent -s sss`, which asks LDAP only.
 
-**`add-user.sh`** replaces `useradd`. It picks the next free UID (above every local and LDAP one), creates the user and their own group, asks for the password, and makes `/home/<name>`. If MLflow is already running, it also runs `../3-mlflow/3-sync-tokens.sh` to give them a job token.
+**`add-user.sh`** replaces `useradd`. It picks the next free UID (above every local and LDAP one), creates the user and their own group, asks for the password, and makes `/home/<name>`. It adds `/etc/subuid` + `/etc/subgid` ranges on `LOGIN_NODES` (rootless podman needs them; `useradd` only does this for local users). If MLflow is already running, it also runs `../3-mlflow/3-sync-tokens.sh` to give them a job token.
 
 **`import-local-users.sh` (optional):** for a master that already has people as local users. It copies them into LDAP with the **same UID/GID** (their files stay theirs) and the **same password** (the `/etc/shadow` hash, stored as `{CRYPT}$6$...`). It skips `KEEP_LOCAL` and service accounts (`nologin`), and only adds to LDAP, never changes local files. Run it with `--dry-run` first.
 
@@ -36,7 +36,7 @@ sudo bash add-user.sh <name>                 # on master: each new person
 |---|---|
 | `1-server.sh` | `dnf install 389-ds-base`, `dscreate` (self-signed TLS), `ou=People`/`ou=Groups`, access rules, CA -> `LDAP_CA` on the shared `/home` |
 | `2-client.sh` | UID clash check, `sssd.conf` (rfc2307, ldaps, CA pinned, `root:root 0600`), `authselect select sssd with-mkhomedir` |
-| `add-user.sh` | next free UID, user + own group, `ldappasswd -S`, home dir, MLflow token |
+| `add-user.sh` | next free UID, user + own group, `ldappasswd -S`, home dir, subuid/subgid on login nodes, MLflow token |
 | `import-local-users.sh` | optional: local users -> LDAP with the same UID and password hash, then checks each UID |
 
 Access rules: anyone may **read** users and groups except passwords (SSSD needs this), and each user may **change their own password**. Only the Directory Manager can add or delete. Its password is in `LDAP_DM_PASS_FILE` (`/root/.ldap-dm.pass`).
