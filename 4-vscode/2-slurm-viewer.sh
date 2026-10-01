@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Give master to Slurm as partition VIEWER_PARTITION for OOD tool sessions (VS Code "editor only"),
 # while SSH logins and master's own services keep a fixed share that Slurm never hands out:
-#   NodeName=master  <real hardware from slurmd -C>  CoreSpecCount=<reserved cores>  MemSpecLimit=<reserved MB>
+#   NodeName=<VIEWER_NODE> NodeHostname=<master> <real hardware from slurmd -C> CoreSpecCount=<reserved cores> MemSpecLimit=<reserved MB>
 #   PartitionName=viewer ... OverSubscribe=FORCE:<n>   up to n sessions share one core (idle editors ~0 CPU)
 # Memory stays reserved per session (VSCODE_MEM), so (RAM - reserved) / VSCODE_MEM is the real session limit.
+# The Slurm node is NOT called <master>: slurm-bridge taints every k8s node whose name matches a Slurm node
+# (NoExecute), which would evict coredns & co. from master. A different NodeName (same machine via NodeHostname)
+# avoids that; tested 2026-09-30.
 # Run on master: sudo bash 2-slurm-viewer.sh      Safe to rerun. Needs root ssh to the compute nodes.
 set -euo pipefail
 
@@ -26,16 +29,17 @@ mem=$(sed -n 's/.* RealMemory=\([0-9]*\).*/\1/p' <<<"$hw")
 mem=$(( mem * 98 / 100 ))          # a little under what the kernel reports, so a reboot/kernel change never drains the node
 (( VIEWER_RESERVED_CORES < cpus && VIEWER_RESERVED_MEM_MB < mem )) ||
   { echo "Reservation ($VIEWER_RESERVED_CORES cores, $VIEWER_RESERVED_MEM_MB MB) leaves nothing of $cpus cores / $mem MB." >&2; exit 1; }
-NODE="$(sed 's/ RealMemory=[0-9]*//' <<<"$hw") RealMemory=$mem CoreSpecCount=$VIEWER_RESERVED_CORES MemSpecLimit=$VIEWER_RESERVED_MEM_MB"
-PART="PartitionName=$VIEWER_PARTITION Nodes=$MASTER_HOST Default=NO MaxTime=12:00:00 OverSubscribe=FORCE:$VIEWER_OVERSUBSCRIBE"
+NODE="NodeName=$VIEWER_NODE NodeHostname=$MASTER_HOST NodeAddr=$MASTER_HOST $(sed -e "s/^NodeName=[^ ]* //" -e 's/ RealMemory=[0-9]*//' <<<"$hw") RealMemory=$mem CoreSpecCount=$VIEWER_RESERVED_CORES MemSpecLimit=$VIEWER_RESERVED_MEM_MB"
+PART="PartitionName=$VIEWER_PARTITION Nodes=$VIEWER_NODE Default=NO MaxTime=12:00:00 OverSubscribe=FORCE:$VIEWER_OVERSUBSCRIBE"
 cores=$(( cpus - VIEWER_RESERVED_CORES )); gb=$(( (mem - VIEWER_RESERVED_MEM_MB) / 1024 ))
 echo "master: $cpus cores, $mem MB -> Slurm gets $cores cores / ~${gb} GB, SSH + services keep $VIEWER_RESERVED_CORES cores / $(( VIEWER_RESERVED_MEM_MB / 1024 )) GB"
 
 echo "== 2. $CONF"
 BAK=$CONF.bak.$(date +%F-%H%M%S); cp "$CONF" "$BAK"
-if grep -q "^NodeName=$MASTER_HOST " "$CONF"; then sed -i "s|^NodeName=$MASTER_HOST .*|$NODE|" "$CONF"; else echo "$NODE" >> "$CONF"; fi
+# also replaces an older line named after master itself
+if grep -qE "^NodeName=($MASTER_HOST|$VIEWER_NODE) " "$CONF"; then sed -i -E "s#^NodeName=($MASTER_HOST|$VIEWER_NODE) .*#$NODE#" "$CONF"; else echo "$NODE" >> "$CONF"; fi
 if grep -q "^PartitionName=$VIEWER_PARTITION " "$CONF"; then sed -i "s|^PartitionName=$VIEWER_PARTITION .*|$PART|" "$CONF"; else echo "$PART" >> "$CONF"; fi
-grep -E "^(NodeName=$MASTER_HOST|PartitionName=$VIEWER_PARTITION) " "$CONF"
+grep -E "^(NodeName=$VIEWER_NODE|PartitionName=$VIEWER_PARTITION) " "$CONF"
 if cmp -s "$CONF" "$BAK"; then rm -f "$BAK"; echo "no change to the file"; else echo "backup: $BAK"; fi
 
 echo "== 3. Same slurm.conf on every node (a node that's down gets it when it's back)"
@@ -48,7 +52,7 @@ done
 echo "== 4. Apply (running jobs survive)"
 # Compare with what slurmctld RUNS with, not with the old file: a rerun after a half-finished run
 # finds the file already edited, but the controller still on the old node size.
-running=$(scontrol show node "$MASTER_HOST" 2>/dev/null)
+running=$(scontrol show node "$VIEWER_NODE" 2>/dev/null)
 if ! grep -q "CPUTot=$cpus " <<<"$running" || ! grep -q "RealMemory=$mem " <<<"$running" ||
    ! grep -q "CoreSpecCount=$VIEWER_RESERVED_CORES " <<<"$running" || ! grep -q "MemSpecLimit=$VIEWER_RESERVED_MEM_MB" <<<"$running"; then
   echo "master's resources changed: restarting slurmctld and master's slurmd"
@@ -61,12 +65,17 @@ scontrol reconfigure               # every daemon rereads slurm.conf
 
 echo "== 5. Check"
 sleep 3
-scontrol show node "$MASTER_HOST" | grep -oE "(CPUTot|CPUEfctv|RealMemory|CoreSpecCount|MemSpecLimit|State)=[^ ]*" | tr '\n' ' '; echo
+scontrol show node "$VIEWER_NODE" | grep -oE "(CPUTot|CPUEfctv|RealMemory|CoreSpecCount|MemSpecLimit|State)=[^ ]*" | tr '\n' ' '; echo
 sinfo -p "$VIEWER_PARTITION" -o "%P %N %c %m %h %l"      # %h: FORCE:$VIEWER_OVERSUBSCRIBE
 timeout 60 srun -p "$VIEWER_PARTITION" -t 1 --mem=100M hostname      # expect: $MASTER_HOST
 echo
 if [ ${#missed[@]} -gt 0 ]; then
   echo "NOT copied to: ${missed[*]}. When they're back: rerun this script (or scp $CONF root@<node>:$CONF)."
   echo "Until then those nodes still have the old slurm.conf (Slurm logs a config mismatch for them)."
+fi
+# A master that was once a Slurm node under its own name still carries slurm-bridge's taint: drop it (no-op otherwise)
+if [ -f /etc/kubernetes/admin.conf ] && command -v kubectl >/dev/null; then
+  KUBECONFIG=/etc/kubernetes/admin.conf kubectl taint node "$MASTER_HOST" slinky.slurm.net/managed-node- 2>/dev/null &&
+    echo "removed the old slurm-bridge taint from $MASTER_HOST" || true
 fi
 echo "Done. Next: sudo bash 3-install-ood-app.sh"

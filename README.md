@@ -18,6 +18,7 @@ laptop ──ssh tunnel──> master (login node)                       cn01, c
 | Folder | What it sets up |
 |---|---|
 | [`site.conf`](site.conf) | **all** site values: hostnames, IPs, base DN, ports, registry. The only file to edit |
+| [`0-registry/`](0-registry/README.md) | the container registry on master (podman → Kubernetes), containerd + podman on every node, `k8s-image` |
 | [`1-ldap/`](1-ldap/README.md) | LDAP server on master, SSSD on every node, `add-user.sh` |
 | [`2-ood/`](2-ood/README.md) | Open OnDemand with the LDAP login, self-signed TLS, Slurm cluster file |
 | [`3-mlflow/`](3-mlflow/README.md) | MLflow image, the k8s deployment, job tokens, the OOD page ([how it works](3-mlflow/WORKFLOW.md)) |
@@ -28,13 +29,16 @@ laptop ──ssh tunnel──> master (login node)                       cn01, c
 - AlmaLinux 9 on every node, root on each, and the internet on master (packages, PyPI, the OOD repo)
 - Slurm working (`sinfo`, `srun hostname`), and `/home` shared from master to every node
 - Kubernetes with `master` as a node, `kubectl` working as root (`/etc/kubernetes/admin.conf`)
-- A container registry every k8s node can pull from (`REGISTRY`, e.g. `master:5000`), and `podman` on master
+- `podman` on master (and on login nodes), `containerd` + `crictl` on every k8s node
 - `MASTER_HOST` resolving to `MASTER_IP` on every node (`/etc/hosts`)
 
 ## Install (in this order)
 
 ```bash
-vi site.conf                                    # 0. every value, before anything else
+vi site.conf                                    # every value, before anything else
+
+# 0. container registry (podman -> Kubernetes)
+sudo bash 0-registry/setup-registry.sh          # on master, needs root ssh to the compute nodes
 
 # 1. users (LDAP)
 sudo bash 1-ldap/1-server.sh                    # on master
@@ -74,11 +78,17 @@ One password per person works for **SSH, Slurm, OOD and the MLflow UI**. Jobs lo
 
 ## Open it from the laptop
 
+**Production:** users open OOD's own address (`https://<OOD_SERVERNAME>`) in the browser; no ssh. Everything users
+run on the cluster is reached through OOD (VS Code, Model Hub, their own web apps via `/rnode/<host>/<port>/`).
+The one exception today is the MLflow web UI on `MASTER_IP:MLFLOW_PORT` (see below).
+
+**This test cluster only** (it sits behind a jump host):
+
 ```bash
 sudo ssh -J <you>@<jump-host> -L 443:localhost:443 -L 30500:<MASTER_IP>:30500 <you>@<MASTER_HOST>
 ```
 
-Then open **https://localhost** (OOD). The local port must be **443**, because OOD redirects every other port. `-L 30500:…` is for **Open MLflow**, which goes to MLflow directly (see [3-mlflow](3-mlflow/README.md)).
+Then open **https://localhost** (OOD). The local port must be **443**, because OOD redirects every other port. `-L 30500:…` is for **Open MLflow**, which goes to MLflow directly (see [3-mlflow](3-mlflow/README.md)). In production that port must instead be reachable from users' network (open item: OOD's `/node` proxy drops the `Authorization` header MLflow's login needs).
 
 This cluster: `sudo ssh -J ankush@10.208.34.138 -L 443:localhost:443 -L 30500:192.168.40.102:30500 admin@master`
 

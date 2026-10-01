@@ -35,7 +35,7 @@ scripts. In the MLflow web UI, use your normal cluster (SSH) password. The URI i
 <h4>MLflow web UI</h4>
 <p><small><b>Open MLflow</b> goes straight to MLflow on port {PORT}, not through OnDemand
 (OnDemand drops the password, so MLflow would always refuse). Log in with your cluster (SSH) username and password.
-From a laptop, your SSH tunnel needs <code>-L {PORT}:{HOST}:{PORT}</code> as well as <code>-L 443:localhost:443</code>.</small></p>"""
+If the button doesn't open, your network can't reach port {PORT} on {HOST}: ask the admin.</small></p>"""
     start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
     return [f"""<!doctype html><html><head><meta charset="utf-8"><title>MLflow (shared)</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">

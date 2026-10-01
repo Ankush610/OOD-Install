@@ -1,0 +1,52 @@
+# Cluster-wide, once (1-setup.sh). In every namespace labelled aistack/uid (the per-user u-<user> namespaces),
+# pods must run as that uid/gid: NFS trusts whatever UID a pod claims, so without this a pod in u-bob could set
+# runAsUser to alice's UID and read alice's home through its volumes. No supplementalGroups/fsGroup either
+# (they'd add group read rights). Containers may repeat the pod's uid/gid but not change them.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: pod-runs-as-namespace-owner }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["pods", "pods/ephemeralcontainers"]
+  variables:
+  - name: uid
+    expression: "namespaceObject.metadata.labels['aistack/uid']"
+  - name: gid
+    expression: "namespaceObject.metadata.labels['aistack/gid']"
+  validations:
+  - expression: >-
+      has(object.spec.securityContext) &&
+      has(object.spec.securityContext.runAsUser) && string(object.spec.securityContext.runAsUser) == variables.uid &&
+      has(object.spec.securityContext.runAsGroup) && string(object.spec.securityContext.runAsGroup) == variables.gid &&
+      !has(object.spec.securityContext.supplementalGroups) && !has(object.spec.securityContext.fsGroup)
+    message: "pod securityContext must set runAsUser/runAsGroup to your own uid/gid, with no supplementalGroups/fsGroup"
+  - expression: >-
+      object.spec.containers.all(c, !has(c.securityContext) ||
+        ((!has(c.securityContext.runAsUser) || string(c.securityContext.runAsUser) == variables.uid) &&
+         (!has(c.securityContext.runAsGroup) || string(c.securityContext.runAsGroup) == variables.gid)))
+    message: "containers may not run as a different runAsUser/runAsGroup than the namespace owner"
+  - expression: >-
+      !has(object.spec.initContainers) || object.spec.initContainers.all(c, !has(c.securityContext) ||
+        ((!has(c.securityContext.runAsUser) || string(c.securityContext.runAsUser) == variables.uid) &&
+         (!has(c.securityContext.runAsGroup) || string(c.securityContext.runAsGroup) == variables.gid)))
+    message: "initContainers may not run as a different runAsUser/runAsGroup than the namespace owner"
+  - expression: >-
+      !has(object.spec.ephemeralContainers) || object.spec.ephemeralContainers.all(c, !has(c.securityContext) ||
+        ((!has(c.securityContext.runAsUser) || string(c.securityContext.runAsUser) == variables.uid) &&
+         (!has(c.securityContext.runAsGroup) || string(c.securityContext.runAsGroup) == variables.gid)))
+    message: "ephemeralContainers may not run as a different runAsUser/runAsGroup than the namespace owner"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: pod-runs-as-namespace-owner }
+spec:
+  policyName: pod-runs-as-namespace-owner
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions: [{ key: aistack/uid, operator: Exists }]

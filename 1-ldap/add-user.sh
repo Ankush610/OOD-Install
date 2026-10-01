@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Add a person to the cluster (instead of useradd on every node): next free UID, own group, password, home.
 # Every node with 2-client.sh sees them at once, with the same UID. The same password works for
-# SSH, Slurm, OOD and the MLflow UI. If MLflow is running, it also gets their MLflow job token.
+# SSH, Slurm, OOD and the MLflow UI. If MLflow is running, it also gets their MLflow job token; if Model Hub
+# is set up, their k8s namespace and login.
 # Run on master: sudo bash add-user.sh <username>     (asks for the password)
 set -euo pipefail
 
@@ -71,7 +72,14 @@ for n in $LOGIN_NODES; do
   echo "$n: $U:$start:65536"
 done
 
-echo "== 7. Check"
+echo "== 7. Model Hub: namespace u-$U, GPU quota, k8s login (skipped if 5-model-hub isn't set up yet)"
+if KUBECONFIG=/etc/kubernetes/admin.conf kubectl get validatingadmissionpolicy pod-runs-as-namespace-owner >/dev/null 2>&1; then
+  bash "$HERE/../5-model-hub/2-sync-users.sh" "$U"
+else
+  echo "Model Hub not set up, skipped. Later: sudo bash 5-model-hub/2-sync-users.sh $U"
+fi
+
+echo "== 8. Check"
 getent passwd "$U" && id "$U"
 echo
 echo "Done. $U logs in everywhere (SSH, Slurm, OOD, MLflow UI) with that password."

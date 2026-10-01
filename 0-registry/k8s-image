@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+#
+# k8s-image - get container images into the cluster registry (master:5000)
+#
+# Kubernetes on this cluster pulls images from the local registry at
+# master:5000, NOT from your podman store. Use k8s-image to put an image
+# there. Runs as any user (rootless podman) - no sudo needed.
+#
+# USAGE
+#   k8s-image build  NAME:TAG [DIR] [-f FILE]
+#                                      Build DIR/Dockerfile (default: .; -f
+#                                      picks a different file) and push it as
+#                                      master:5000/NAME:TAG
+#   k8s-image push   NAME:TAG          Push an image you already built or
+#                                      tagged locally
+#   k8s-image mirror SRC [NAME:TAG]    Pull upstream image SRC, then push it
+#                                      to master:5000. NAME:TAG defaults to
+#                                      SRC's last path segment, e.g.
+#                                      docker.io/vllm/vllm-openai:latest
+#                                        -> master:5000/vllm-openai:latest
+#   k8s-image ls                       List images currently in the registry
+#   k8s-image help                     Show this help
+#
+#   Shorthand: "k8s-image NAME:TAG [DIR]" == "k8s-image build NAME:TAG [DIR]"
+#
+# EXAMPLES
+#   k8s-image mirror docker.io/library/redis:7
+#   k8s-image build  myapp:v1
+#   k8s-image build  myapp:v1 ./services/api
+#   podman tag localhost/x:latest master:5000/x:latest && k8s-image push x:latest
+#
+# IN A KUBERNETES MANIFEST
+#   image: master:5000/NAME:TAG
+#
+set -euo pipefail
+
+REG=@REGISTRY@                  # filled in from site.conf REGISTRY by setup-registry.sh
+
+die()   { echo "k8s-image: $*" >&2; exit 1; }
+usage() { awk 'NR>2 && /^#/{sub(/^# ?/,"");print;next} NR>2{exit}' "$0"; }
+
+manifest_hint() {
+  echo
+  echo "in a manifest:  image: $REG/$1"
+}
+
+do_build() {
+  local file="" positional=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -f) file=$2; shift 2 ;;
+      *)  positional+=("$1"); shift ;;
+    esac
+  done
+  set -- "${positional[@]}"
+  [ $# -ge 1 ] || die "build: need NAME:TAG (try: k8s-image help)"
+  local name=$1 dir=${2:-.}
+  case "$name" in *:*) ;; *) die "build: NAME must include a :TAG" ;; esac
+  local build_args=(-t "$REG/$name")
+  [ -n "$file" ] && build_args+=(-f "$file")
+  podman build "${build_args[@]}" "$dir"
+  podman push "$REG/$name"
+  manifest_hint "$name"
+}
+
+do_push() {
+  [ $# -eq 1 ] || die "push: need exactly one NAME:TAG"
+  local name=${1#"$REG"/}
+  case "$name" in *:*) ;; *) die "push: NAME must include a :TAG" ;; esac
+  podman push "$REG/$name"
+  manifest_hint "$name"
+}
+
+do_mirror() {
+  [ $# -ge 1 ] || die "mirror: need an upstream image reference"
+  local src=$1 dst=${2:-}
+  [ -n "$dst" ] || dst=${src##*/}          # docker.io/foo/bar:v1 -> bar:v1
+  case "$dst" in *:*) ;; *) dst="$dst:latest" ;; esac
+  podman pull "$src"
+  podman tag "$src" "$REG/$dst"
+  podman push "$REG/$dst"
+  manifest_hint "$dst"
+}
+
+do_ls() {
+  local repos r tags t
+  repos=$(curl -fsS "http://$REG/v2/_catalog" \
+            | sed 's/.*\[//; s/\].*//; s/"//g; s/,/ /g') || die "ls: cannot reach $REG"
+  [ -n "${repos// }" ] || { echo "(registry is empty)"; return 0; }
+  for r in $repos; do
+    tags=$(curl -fsS "http://$REG/v2/$r/tags/list") || tags=""
+    case "$tags" in *'"tags":null'*|"") continue ;; esac     # a repository whose tags were all deleted
+    tags=$(sed 's/.*\[//; s/\].*//; s/"//g; s/,/ /g' <<<"$tags")
+    for t in $tags; do echo "$REG/$r:$t"; done
+  done
+}
+
+case "${1:-help}" in
+  ""|-h|--help|help) usage ;;
+  build)             shift; do_build "$@" ;;
+  push)              shift; do_push "$@" ;;
+  mirror)            shift; do_mirror "$@" ;;
+  ls|list)           do_ls ;;
+  *:*)               do_build "$@" ;;
+  *)                 die "unknown command: $1 (try: k8s-image help)" ;;
+esac
