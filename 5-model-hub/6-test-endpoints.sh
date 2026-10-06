@@ -43,6 +43,8 @@ rm -rf "$t"
 
 deploy() {  # deploy <runtime> <name> key=value...  -> waits until Ready (or fails), prints the ClusterIP
   local rt=$1 name=$2; shift 2
+  # a run stopped before its cleanup leaves the pod behind, and pods can't be changed in place: start clean
+  kU delete pod,svc,secret -l app="$name" --wait=true >/dev/null 2>&1 || true
   python3 "$HERE/render.py" "$rt" name="$name" user="$U" uid="$uid" gid="$gid" partition="$BRIDGE_PARTITION" \
     hours=1 "$@" | kU apply -f - >/dev/null || return 1
   # Ready = the model is loaded (startup probe passed); big models take minutes, plus the wait for a GPU
@@ -60,7 +62,14 @@ cleanup() { [ "$keep" = 1 ] && { echo "      kept: $1 (delete: kubectl -n $NS de
             kU delete pod,svc,secret -l app="$1" --wait=true >/dev/null 2>&1; echo "      deleted $1"; }
 
 register() {  # register <sif> <name> <python code that sets `model` and `X`, and logs it>  -> prints the version
-  asU "$APPTAINER" exec --pwd /tmp "$1" python - "$2" "$U" <<<"$3" 2>&1 | grep -v -i warning | tail -1
+  # experiment mh-test-<user>; deleted in the MLflow UI it only goes to the trash, and set_experiment refuses it: restore
+  local pre='import sys, mlflow
+exp, c = f"mh-test-{sys.argv[2]}", mlflow.MlflowClient()
+e = c.get_experiment_by_name(exp)
+if e and e.lifecycle_stage == "deleted": c.restore_experiment(e.experiment_id)
+mlflow.set_experiment(exp)
+'
+  asU "$APPTAINER" exec --pwd /tmp "$1" python - "$2" "$U" <<<"$pre$3" 2>&1 | grep -v -i warning | tail -1
 }
 
 for test in "${tests[@]}"; do
@@ -74,7 +83,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from mlflow.models import infer_signature
 name, user = sys.argv[1], sys.argv[2]
-mlflow.set_experiment(f"mh-test-{user}")
 rng = np.random.default_rng(0)
 X = pd.DataFrame({"age": rng.integers(18, 80, 200).astype(float), "usage": rng.random(200) * 100})
 y = (X["age"] + X["usage"] > 90).astype(int)
@@ -115,7 +123,6 @@ torch)
 import sys, mlflow, numpy as np, torch
 from mlflow.models import infer_signature
 name, user = sys.argv[1], sys.argv[2]
-mlflow.set_experiment(f"mh-test-{user}")
 torch.manual_seed(0)
 X = torch.rand(256, 4); y = (X.sum(1, keepdim=True) > 2).float()
 net = torch.nn.Sequential(torch.nn.Linear(4, 8), torch.nn.ReLU(), torch.nn.Linear(8, 1), torch.nn.Sigmoid())

@@ -49,6 +49,28 @@ for user in $users; do
   echo "$state $user"
 done
 
+# Admin base models (5-model-hub's `model-register --public`, tag public=true): read access for every user, so
+# "just deploy Qwen" works. default_permission is NO_PERMISSIONS, so each user needs their own grant; rerun = new users.
+echo "== Public models: read access for every user"
+admin_curl() { curl -s -K <(printf 'user = "admin:%s"\n' "$ADMIN_PASS") "$@"; }
+admin_curl -G "$API/registered-models/search" --data-urlencode "filter=tags.public = 'true'" --data-urlencode max_results=1000 |
+  python3 -c 'import json,sys; [print(m["name"]) for m in json.load(sys.stdin).get("registered_models", [])]' |
+while read -r model; do
+  new=0 had=0 failed=""
+  for user in $users; do
+    out=$(python3 -c 'import json,sys; print(json.dumps({"username": sys.argv[1], "resource_type": "registered_model",
+                                                         "resource_id": sys.argv[2], "permission": "READ"}))' "$user" "$model" |
+          admin_curl -w '\n%{http_code}' -X POST "${API%/2.0/mlflow}/3.0/mlflow/users/permissions/grant" \
+                     -H 'Content-Type: application/json' --data-binary @-)
+    case $out in
+      *$'\n'200) new=$((new + 1)) ;;
+      *RESOURCE_ALREADY_EXISTS*) had=$((had + 1)) ;;
+      *) failed+=" $user" ;;
+    esac
+  done
+  echo "public  $model: $new granted, $had already had it${failed:+, FAILED:$failed}"
+done
+
 cat <<EOF
 
 Done. MLflow UI: log in with your LDAP (SSH/OOD) password.

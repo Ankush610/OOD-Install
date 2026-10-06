@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Model Hub, once per cluster: the modelhub account + MODELS_ROOT, the pod UID policy, and one GPU DeviceClass
-# per Slurm GPU type. Safe to rerun. Per-user parts (namespace, quota, kubeconfig) are 2-sync-users.sh.
+# Model Hub, once per cluster: the modelhub account + MODELS_ROOT, the pod UID policy, one GPU DeviceClass
+# per Slurm GPU type, and DynamicResources in slurm-bridge's scheduler (rerun after every slurm-bridge helm upgrade).
+# Safe to rerun. Per-user parts (namespace, quota, kubeconfig) are 2-sync-users.sh.
 # Run on master: sudo bash 1-setup.sh
 set -euo pipefail
 
@@ -40,8 +41,39 @@ else
   echo "No GPU class made: no GPU node is up, or Slurm's types don't match DRA's product names (see WARNING above)."
 fi
 
-echo "== 5. Check"
+echo "== 5. slurm-bridge scheduler: DynamicResources plugin (nvidia.com/gpu -> DRA claim -> GPU in the pod)"
+# The chart's scheduler profile disables every default plugin (multiPoint '*') and has no value to add one back,
+# so every `helm upgrade` of slurm-bridge drops DynamicResources again: rerun this script after one.
+# Without it Slurm reserves the GPU but the pod's ResourceClaim is never allocated: no /dev/nvidia* in the pod.
+cm=$(kubectl -n "$BRIDGE_NS" get cm scheduler-config -o json)
+if grep -q DynamicResources <<<"$cm"; then
+  echo "already enabled"
+else
+  python3 -c '
+import json, re, sys
+cm = json.load(sys.stdin)
+key = "scheduler-config.yaml"
+new, n = re.subn(r"^( *)multiPoint:\n", lambda m: f"{m[1]}multiPoint:\n{m[1]}  enabled:\n{m[1]}  - name: \x27DynamicResources\x27\n",
+                 cm["data"][key], count=1, flags=re.M)
+if not n:
+    sys.exit("no multiPoint: in scheduler-config; chart changed, add DynamicResources by hand")
+cm["data"][key] = new
+print(json.dumps(cm))' <<<"$cm" | kubectl replace -f -
+  kubectl -n "$BRIDGE_NS" rollout restart deploy/slurm-bridge-scheduler
+  kubectl -n "$BRIDGE_NS" rollout status deploy/slurm-bridge-scheduler --timeout=120s
+fi
+
+echo "== 6. model-register -> /home/apps/bin (shared /home: once for every node, on everyone's PATH)"
+install -d -m 755 /home/apps/bin
+sed -e "s#@MODELS_ROOT@#$MODELS_ROOT#g" -e "s#@MLFLOW_DATA@#$MLFLOW_DATA#g" -e "s#@APPTAINER@#$APPTAINER#g" \
+    -e "s#@ML_TRAIN_SIF@#$ML_TRAIN_SIF#g" -e "s#@MLFLOW_URI@#$MLFLOW_URI#g" "$HERE/model-register" > /home/apps/bin/model-register.new
+chmod 755 /home/apps/bin/model-register.new && mv /home/apps/bin/model-register.new /home/apps/bin/model-register
+
+echo "== 7. Check"
 kubectl get validatingadmissionpolicy,validatingadmissionpolicybinding pod-runs-as-namespace-owner
 kubectl get deviceclass -o custom-columns=CLASS:.metadata.name,MAPS:.spec.extendedResourceName
+kubectl -n "$BRIDGE_NS" get cm scheduler-config -o jsonpath='{.data.scheduler-config\.yaml}' | grep -A2 'multiPoint:'
+grep -q @ /home/apps/bin/model-register && echo "WARNING: model-register still has an unfilled @VAR@" >&2
 echo
 echo "Next: put base models under $MODELS_ROOT/base (as $MODELHUB_USER), then sudo bash 2-sync-users.sh"
+echo "Admin base model: sudo /home/apps/bin/model-register --public $MODELS_ROOT/base/<org>/<model> <name>, then sudo bash ../3-mlflow/3-sync-tokens.sh"

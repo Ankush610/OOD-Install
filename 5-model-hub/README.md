@@ -6,7 +6,8 @@ Deploy registered MLflow models (ML, DL, LLM) as endpoints from OOD. Design and 
 ## Run (on master, after ../3-mlflow)
 
 ```bash
-sudo bash 1-setup.sh          # once: modelhub account + MODELS_ROOT, pod UID policy, GPU DeviceClass(es)
+sudo bash 1-setup.sh          # once (+ after every slurm-bridge helm upgrade): modelhub account + MODELS_ROOT, pod UID policy,
+                              # GPU DeviceClass(es), DynamicResources in slurm-bridge's scheduler, model-register -> /home/apps/bin
 sudo bash 2-sync-users.sh     # every LDAP user (or: 2-sync-users.sh <user> ...); add-user.sh runs it for new people
 sudo bash 3-test-tenancy.sh <userA> <userB>   # proves the rules, acting as userA; cleans up after itself
 bash 4-images.sh              # no root: build + push the serving images, mirror vLLM; tags -> images/built.env
@@ -23,7 +24,13 @@ kubectl label ns slurm-bridge aistack/slurm-bridge=true --overwrite      # keep 
 helm upgrade slurm-bridge oci://ghcr.io/slinkyproject/charts/slurm-bridge --version <deployed version> -n slurm \
   --reuse-values --set-json 'admission.managedNamespaceSelector={"matchLabels":{"aistack/slurm-bridge":"true"}}'
 kubectl -n slurm rollout restart deploy/slurm-bridge-admission deploy/slurm-bridge-controllers deploy/slurm-bridge-scheduler
+sudo bash 1-setup.sh          # REQUIRED after ANY helm upgrade of slurm-bridge: puts DynamicResources back (GPUs)
 ```
+
+**Every `helm upgrade` of slurm-bridge resets its scheduler profile** (ConfigMap `scheduler-config`, hard-coded in the
+chart, no value for it) to `multiPoint: disabled: '*'` with no `DynamicResources`. Pods still get a Slurm job and the
+A30 is reserved in Slurm, but the pod's DRA ResourceClaim is never allocated, so no GPU inside the pod. This happened on
+2026-09-30 (revision 4 above). `1-setup.sh` step 5 patches it back and restarts only the scheduler.
 
 ## Per user
 
@@ -39,7 +46,8 @@ kubectl -n slurm rollout restart deploy/slurm-bridge-admission deploy/slurm-brid
 
 | File | What it does |
 |---|---|
-| `1-setup.sh` | `MODELHUB_USER` (`MODELHUB_UID`, below `MIN_UID`) owns `MODELS_ROOT/base`; applies `onboarding/uid-policy.yaml`; makes one DeviceClass per Slurm GPU type in `BRIDGE_PARTITION` |
+| `1-setup.sh` | `MODELHUB_USER` (`MODELHUB_UID`, below `MIN_UID`) owns `MODELS_ROOT/base`; applies `onboarding/uid-policy.yaml`; makes one DeviceClass per Slurm GPU type in `BRIDGE_PARTITION`; enables `DynamicResources` in `BRIDGE_NS`'s `scheduler-config` (restarts `slurm-bridge-scheduler` only if it changed) |
+| `model-register` | `model-register DIR NAME [--public]`: a Hugging Face folder (`config.json` + `*.safetensors`) under `~/models/` or `MODELS_ROOT/` → MLflow run with only `MODEL.yaml` + a version tagged `path=DIR`, `format=hf` (MLflow rejects local paths as a source). Weights stay put. LoRA / non-`hf` refused (v1 serves full HF models). `--public` (sudo): registers as the MLflow admin + tag `public=true`; `3-mlflow/3-sync-tokens.sh` then grants every user READ. Installed by `1-setup.sh` (`@VARS@` filled) |
 | `onboarding/uid-policy.yaml` | ValidatingAdmissionPolicy: in namespaces labelled `aistack/uid`, pods must run as that uid/gid, no `supplementalGroups`/`fsGroup` |
 | `onboarding/user-ns.yaml` | per-user namespace, RoleBinding, PV/PVC pairs (`${VARS}` filled by `2-sync-users.sh`) |
 | `2-sync-users.sh` | per LDAP user: `~/models`, `user-ns.yaml`, GPU quota (from `gpu-classes.py --quota`), kubeconfig via the k8s CSR API (`kube-apiserver-client` signer, approved, CSR deleted) |
@@ -59,6 +67,10 @@ kubectl -n slurm rollout restart deploy/slurm-bridge-admission deploy/slurm-brid
 | Symptom | Cause | Fix |
 |---|---|---|
 | step 4: `No GPU class made` | no GPU node up (no ResourceSlices), or Slurm's type name isn't in the DRA product name | start a GPU node and rerun; for odd names create the DeviceClass by hand from `gpu-classes.py`'s output format |
+| GPU pod Running with a Slurm job (A30 allocated in `scontrol show job`) but no `/dev/nvidia*`, `nvidia-smi` missing, vLLM `Failed to infer device type`, empty `status.extendedResourceClaimStatus` | a `helm upgrade` of slurm-bridge reset `scheduler-config`: no `DynamicResources` plugin, so the DRA ResourceClaim is never allocated | `sudo bash 1-setup.sh` (step 5), then redeploy the pod |
+| `6-test-endpoints.sh`: `Cannot set a deleted experiment 'mh-test-<user>'` | the experiment was deleted in the MLflow UI (soft delete: it sits in the trash, name still taken) | fixed: `register()` restores it first; by hand: restore it in the MLflow UI |
+| torch endpoint exits: `exported by torch.export API ... weights / buffers on 'cpu' device, it can't be loaded on 'cuda'` | MLflow 3.x logs torch as pt2 by default, and MLflow only loads a pt2 model on the device it was exported on | fixed in the image: `images/mlflow-serve-torch/sitecustomize.py` moves it to the serving device (`move_to_device_pass`); rebuild with `4-images.sh` |
+| a user can't see an admin base model in Model Hub | MLflow's `default_permission = NO_PERMISSIONS`: each user needs a READ grant | `sudo bash ../3-mlflow/3-sync-tokens.sh` (grants READ on every `public=true` model; add-user.sh runs it for new people) |
 | `2-sync-users.sh`: `Run 1-setup.sh first` | no UID policy yet; a user namespace without it would let pods claim any UID | run `1-setup.sh` |
 | test pod stays `Pending`, no Slurm job | namespace not labelled `aistack/slurm-bridge=true`, or slurm-bridge still on its list config | `kubectl -n slurm get cm slurm-bridge-config -o yaml` must show `managedNamespaceSelector` |
 | user's `kubectl`: `Unauthorized` | certificate expired or cluster CA changed | rerun `2-sync-users.sh <user>` |
