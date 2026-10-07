@@ -49,7 +49,7 @@ for user in $users; do
   echo "$state $user"
 done
 
-# Admin base models (5-model-hub's `model-register --public`, tag public=true): read access for every user, so
+# Public models (MLflow tag public=true, set by the model's owner; build-plan step 6b): read access for every user, so
 # "just deploy Qwen" works. default_permission is NO_PERMISSIONS, so each user needs their own grant; rerun = new users.
 echo "== Public models: read access for every user"
 admin_curl() { curl -s -K <(printf 'user = "admin:%s"\n' "$ADMIN_PASS") "$@"; }

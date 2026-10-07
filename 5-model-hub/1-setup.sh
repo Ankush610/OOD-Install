@@ -65,7 +65,7 @@ fi
 
 echo "== 6. model-register -> /home/apps/bin (shared /home: once for every node, on everyone's PATH)"
 install -d -m 755 /home/apps/bin
-sed -e "s#@MODELS_ROOT@#$MODELS_ROOT#g" -e "s#@MLFLOW_DATA@#$MLFLOW_DATA#g" -e "s#@APPTAINER@#$APPTAINER#g" \
+sed -e "s#@MODELS_ROOT@#$MODELS_ROOT#g" -e "s#@APPTAINER@#$APPTAINER#g" \
     -e "s#@ML_TRAIN_SIF@#$ML_TRAIN_SIF#g" -e "s#@MLFLOW_URI@#$MLFLOW_URI#g" "$HERE/model-register" > /home/apps/bin/model-register.new
 chmod 755 /home/apps/bin/model-register.new && mv /home/apps/bin/model-register.new /home/apps/bin/model-register
 
@@ -76,4 +76,4 @@ kubectl -n "$BRIDGE_NS" get cm scheduler-config -o jsonpath='{.data.scheduler-co
 grep -q @ /home/apps/bin/model-register && echo "WARNING: model-register still has an unfilled @VAR@" >&2
 echo
 echo "Next: put base models under $MODELS_ROOT/base (as $MODELHUB_USER), then sudo bash 2-sync-users.sh"
-echo "Admin base model: sudo /home/apps/bin/model-register --public $MODELS_ROOT/base/<org>/<model> <name>, then sudo bash ../3-mlflow/3-sync-tokens.sh"
+echo "Admin base model: model-register $MODELS_ROOT/base/<org>/<model> <name> (as yourself, not sudo)"
