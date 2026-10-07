@@ -13,44 +13,66 @@ def up():
     except Exception:
         return False
 
-def row(ok, text):
-    color = "#2e7d32" if ok else "#c62828"
-    return f'<p><span style="color:{color};font-weight:700">{"&#10003;" if ok else "&#10007;"}</span> {text}</p>'
+USER = pwd.getpwuid(os.getuid()).pw_name
+HUB = "/pun/sys/model_hub/"      # same look as Model Hub: reuse its Bootstrap, icons and style.css
+
+def row(ok, title, hint):
+    pill = ('<span class="status text-success-emphasis bg-success-subtle">OK</span>' if ok else
+            '<span class="status text-danger-emphasis bg-danger-subtle">Problem</span>')
+    return f"""<li class="list-group-item d-flex align-items-center gap-3 py-3">
+  <div class="min-w-0 flex-grow-1"><div class="fw-medium">{title}</div><div class="small text-body-secondary">{hint}</div></div>{pill}</li>"""
 
 def application(environ, start_response):
     server_ok, creds_ok = up(), os.path.isfile(CREDS)
     export = html.escape(f"export MLFLOW_TRACKING_URI={URI}")
-    body = row(server_ok, "MLflow server is running" if server_ok else
-               "MLflow server is not answering. Tell the admin (kubectl -n mlflow get pod).")
-    body += row(creds_ok, "Your job login is set up in <code>~/.mlflow/credentials</code>" if creds_ok else
-                "No <code>~/.mlflow/credentials</code>. Ask the admin to run 3-mlflow/3-sync-tokens.sh.")
-    body += f"""
-<h4>Tracking URI (use inside cluster jobs)</h4>
-<div style="display:flex;gap:6px">
-  <input readonly value="{export}" style="flex:1;font:13px monospace;padding:6px;border:1px solid #ccc;border-radius:4px">
-  <button onclick="navigator.clipboard.writeText(this.previousElementSibling.value);this.textContent='Copied'"
-          style="padding:6px 12px;border:1px solid #888;border-radius:4px;background:#fff;cursor:pointer">Copy</button>
-</div>
-<p><small>Your jobs log in with a token from <code>~/.mlflow/credentials</code>, so no password goes into your
-scripts. In the MLflow web UI, use your normal cluster (SSH) password. The URI is fixed, it never changes.</small></p>
-<h4>MLflow web UI</h4>
-<p><small>{"<b>Open MLflow</b> opens it through OnDemand: you are already logged in." if SSO else
-f"<b>Open MLflow</b> goes straight to MLflow on port {PORT}, not through OnDemand (OnDemand drops the password, "
-f"so MLflow would always refuse). Log in with your cluster (SSH) username and password. If the button doesn't "
-f"open, your network can't reach port {PORT} on {HOST}: ask the admin."}</small></p>"""
+    status = row(server_ok, "MLflow server", "Running" if server_ok else
+                 "Not answering. Tell the admin (kubectl -n mlflow get pod).")
+    status += row(creds_ok, "Job login", "Set up in <code>~/.mlflow/credentials</code>" if creds_ok else
+                  "No <code>~/.mlflow/credentials</code>. Ask the admin to run 3-mlflow/3-sync-tokens.sh.")
+    ui_note = ("Opens through OnDemand: you are already logged in." if SSO else
+               f"Opens MLflow on port {PORT}, not through OnDemand (OnDemand drops the password, so MLflow would "
+               f"always refuse). Log in with your cluster (SSH) username and password. If it doesn't open, your "
+               f"network can't reach port {PORT} on {HOST}: ask the admin.")
+    open_js = "location.origin+'" + PREFIX + "/'" if SSO else "'http://'+location.hostname+':" + str(PORT) + PREFIX + "/'"
     start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
-    return [f"""<!doctype html><html><head><meta charset="utf-8"><title>MLflow (shared)</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-body{{margin:0;background:#f4f5f7;font:15px/1.5 system-ui,sans-serif;color:#222}}
-.card{{max-width:680px;margin:48px auto;background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.12);border-top:4px solid #0d6efd}}
-.hd{{padding:16px 20px;border-bottom:1px solid #eee;font-size:18px;font-weight:600}}
-.bd{{padding:16px 20px}} h4{{margin:16px 0 6px;font-size:14px;color:#555}} small{{color:#666}}
-.ft{{padding:12px 20px;border-top:1px solid #eee;display:flex;justify-content:space-between}}
-a.btn{{display:inline-block;color:#fff;text-decoration:none;padding:7px 16px;border-radius:5px}}
-</style></head><body><div class="card">
-<div class="hd">MLflow (shared)</div><div class="bd">{body}</div>
-<div class="ft"><a class="btn" style="background:#6c757d" href="/pun/sys/dashboard">Dashboard</a>
-<a class="btn" style="background:#0d6efd" href="#" target="_blank"
-   onclick="this.href={"location.origin+'" + PREFIX + "/'" if SSO else "'http://'+location.hostname+':" + str(PORT) + PREFIX + "/'"}">Open MLflow</a></div>
-</div></body></html>""".encode()]
+    return [f"""<!doctype html><html lang="en" data-bs-theme="light"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>MLflow</title>
+<link rel="stylesheet" href="{HUB}vendor/bootstrap/bootstrap.min.css">
+<link rel="stylesheet" href="{HUB}vendor/bootstrap-icons/bootstrap-icons.min.css">
+<link rel="stylesheet" href="{HUB}style.css">
+<script>try{{document.documentElement.dataset.bsTheme=localStorage.getItem('mh-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}}catch(e){{}}</script>
+</head><body class="bg-body-tertiary">
+<nav class="navbar bg-body border-bottom sticky-top py-2"><div class="container-xl">
+  <span class="navbar-brand d-flex align-items-center gap-2 fw-semibold"><span class="brand-mark"><i class="bi bi-graph-up"></i></span>MLflow</span>
+  <div class="d-flex align-items-center gap-2">
+    <span class="d-flex align-items-center gap-2 small"><span class="avatar" aria-hidden="true">{html.escape(USER[0])}</span><span class="text-body-secondary">{html.escape(USER)}</span></span>
+    <button class="btn btn-sm btn-icon" id="theme" type="button" aria-label="Toggle dark mode"><i class="bi bi-moon-stars"></i></button>
+  </div></div></nav>
+<main class="container-xl py-4" style="max-width:820px">
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-4">
+    <div><h1 class="h3 mb-1">MLflow</h1><p class="text-body-secondary mb-0">Track experiments and register models. You see only your own.</p></div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{HUB}"><i class="bi bi-boxes me-1"></i>Model Hub</a>
+      <a class="btn btn-primary" href="#" target="_blank" rel="noopener" onclick="this.href={open_js}"><i class="bi bi-box-arrow-up-right me-1"></i>Open MLflow</a>
+    </div>
+  </div>
+  <div class="card mb-4"><div class="card-body pb-0"><div class="eyebrow">Status</div></div>
+    <ul class="list-group list-group-flush">{status}</ul></div>
+  <div class="card mb-4"><div class="card-body">
+    <div class="eyebrow mb-3">Use it in your jobs</div>
+    <ol class="steps">
+      <li><div class="fw-medium mb-2">Set the tracking address in your job script</div>
+        <div class="code-wrap"><pre class="code mb-0" id="uri">{export}</pre>
+          <button class="btn btn-sm btn-outline-secondary btn-copy" type="button" onclick="navigator.clipboard.writeText(document.getElementById('uri').textContent);this.innerHTML='<i class=\\'bi bi-check2\\'></i> Copied'"><i class="bi bi-clipboard"></i> Copy</button></div>
+        <div class="small text-body-secondary mt-2">It never changes, so you can keep it in your scripts.</div></li>
+      <li><div class="fw-medium">Log runs as usual</div>
+        <div class="small text-body-secondary">Your jobs log in with a token from <code>~/.mlflow/credentials</code>, so no password goes into your scripts.</div></li>
+    </ol></div></div>
+  <div class="card"><div class="card-body">
+    <div class="eyebrow mb-2">Web UI</div>
+    <p class="small text-body-secondary mb-0">{ui_note}</p></div></div>
+</main>
+<script>
+const t=document.getElementById('theme'),ic=()=>t.innerHTML='<i class="bi bi-'+(document.documentElement.dataset.bsTheme==='dark'?'sun':'moon-stars')+'"></i>';ic();
+t.onclick=()=>{{const v=document.documentElement.dataset.bsTheme==='dark'?'light':'dark';document.documentElement.dataset.bsTheme=v;ic();try{{localStorage.setItem('mh-theme',v)}}catch(e){{}}}};
+</script></body></html>""".encode()]
