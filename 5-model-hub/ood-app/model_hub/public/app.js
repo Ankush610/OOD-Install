@@ -99,7 +99,10 @@ async function renderModel(name, version) {
   const libs = info.libs || [], drift = libs.filter(l => !l.ok);
   const took = run?.end && run?.start ? Math.round((run.end - run.start) / 60000) : null;
   const hw = (isML ? ['<option value="">CPU</option>'] : [!isLLM && '<option value="">CPU</option>',
-    ...ME.gpu_types.map(t => `<option value="${h(t)}">1 GPU · ${h(t.toUpperCase())}</option>`)]).filter(Boolean).join('');
+    ...ME.gpu_types.flatMap(t => Array.from({ length: isLLM ? Math.max(1, ME.limits.gpus) : 1 }, (_, i) =>
+      `<option value="${h(t)}" data-gpus="${i + 1}">${i + 1} GPU${i ? 's' : ''} · ${h(t.toUpperCase())}</option>`))]).filter(Boolean).join('');
+  const gpuNote = `You may use ${ME.limits.gpus} GPU${ME.limits.gpus === 1 ? '' : 's'} at a time` +
+    (isLLM && ME.limits.gpus > 1 ? ' (2+ GPUs split one big model, e.g. a 70B).' : '.');
   const defName = `${name}-v${info.version}`.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').slice(0, 42);
   const versions = Array.from({ length: latest }, (_, i) => latest - i);
   app.innerHTML = `<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="#/">Models</a></li>
@@ -148,11 +151,11 @@ async function renderModel(name, version) {
             <div class="form-text">Lowercase letters, digits and dashes.</div></div>
           <div class="mb-3"><label class="form-label" for="hw">Hardware</label>
             <select class="form-select" id="hw" ${hw ? '' : 'disabled'}>${hw || '<option>No GPU types found</option>'}</select>
-            <div class="form-text">${isML ? 'Classic ML runs on CPU.' : isLLM ? 'LLMs need a GPU.' : 'PyTorch runs on GPU or CPU.'} One GPU per person at a time.</div></div>
+            <div class="form-text">${isML ? 'Classic ML runs on CPU.' : isLLM ? 'LLMs need a GPU.' : 'PyTorch runs on GPU or CPU.'} ${gpuNote}</div></div>
           <div class="mb-3"><label class="form-label" for="hours">Run for</label>
-            <div class="input-group"><input class="form-control" id="hours" type="number" min="1" max="${ME.endpoint_hours}" value="${ME.endpoint_hours}">
+            <div class="input-group"><input class="form-control" id="hours" type="number" min="1" max="${ME.limits.max_hours}" value="${ME.limits.default_hours}">
               <span class="input-group-text">hours</span></div>
-            <div class="form-text">The endpoint is a Slurm job: it may wait in the queue, and it stops when its time is up.</div></div>
+            <div class="form-text">1 to ${ME.limits.max_hours} hours. The endpoint is a Slurm job: it waits in the queue when GPUs are busy, and stops when its time is up. Longer: ask the admin.</div></div>
           <div class="d-flex gap-2"><button class="btn btn-primary flex-grow-1" id="go" type="submit"><i class="bi bi-rocket-takeoff me-1"></i>Deploy</button>
             <button class="btn btn-outline-secondary" id="pre" type="button"><i class="bi bi-code-slash me-1"></i>Preview</button></div>
         </form><div id="out" class="mt-3"></div>
@@ -160,7 +163,8 @@ async function renderModel(name, version) {
     </div>`;
   $('#ver').onchange = () => { location.hash = `#/model/${enc(name)}/${$('#ver').value}`; };
   const body = extra => ({ model: name, version: info.version, endpoint: $('#ep').value.trim(), gpu: !!$('#hw').value,
-                           gpu_type: $('#hw').value, hours: +$('#hours').value, ...extra });
+                           gpu_type: $('#hw').value, gpus: +($('#hw').selectedOptions[0]?.dataset.gpus || 1),
+                           hours: +$('#hours').value, ...extra });
   $('#pre').onclick = async () => {
     try { const r = await api('deploy', { method: 'POST', body: body({ preview: true }) });
           $('#yaml-body').textContent = JSON.stringify(r.manifest, null, 2); bootstrap.Modal.getOrCreateInstance($('#yaml')).show(); }
@@ -187,7 +191,7 @@ async function renderEndpoints() {
         ${kindIcon(e.runtime === 'vllm' ? 'LLM' : '')}
         <div class="me-auto min-w-0"><div class="d-flex align-items-center gap-2"><a class="fw-semibold text-decoration-none" href="#/endpoint/${enc(e.name)}">${h(e.name)}</a>${stateBadge(e.state)}</div>
           <div class="small text-body-secondary text-truncate">${h(e.model)} · ${e.runtime === 'vllm' ? 'vLLM' : 'MLflow'} ·
-            <i class="bi bi-${e.gpu ? 'gpu-card' : 'cpu'}"></i> ${e.gpu ? 'GPU' : 'CPU'}${e.node ? ' · ' + h(e.node) : ''} · <i class="bi bi-hourglass-split"></i> ${left(e.expires)}</div>
+            <i class="bi bi-${e.gpu ? 'gpu-card' : 'cpu'}"></i> ${e.gpu ? (e.gpu > 1 ? e.gpu + ' GPUs' : 'GPU') : 'CPU'}${e.node ? ' · ' + h(e.node) : ''} · <i class="bi bi-hourglass-split"></i> ${left(e.expires)}</div>
           ${e.why ? `<div class="small text-${STATE[e.state] === 'danger' ? 'danger' : 'body-secondary'}">${h(e.why)}</div>` : ''}</div>
         <div class="btn-group"><a class="btn btn-sm btn-outline-primary" href="#/endpoint/${enc(e.name)}"><i class="bi bi-box-arrow-up-right me-1"></i>Open</a>
           <button class="btn btn-sm btn-outline-danger" data-del="${h(e.name)}" aria-label="Delete ${h(e.name)}"><i class="bi bi-trash"></i></button></div>
@@ -222,7 +226,7 @@ async function renderEndpoint(name, tab = 'play') {
       <li class="breadcrumb-item active" aria-current="page">${h(name)}</li></ol></nav>
     <div class="d-flex flex-wrap align-items-center gap-3 mb-3">${kindIcon(ep.runtime === 'vllm' ? 'LLM' : '')}
       <div class="me-auto"><div class="d-flex align-items-center gap-2"><h1 class="h3 mb-0">${h(name)}</h1>${stateBadge(ep.state)}</div>
-        <div class="small text-body-secondary">${h(ep.model)} · ${ep.gpu ? 'GPU' : 'CPU'}${ep.node ? ' on ' + h(ep.node) : ''} · ${left(ep.expires)}</div></div>
+        <div class="small text-body-secondary">${h(ep.model)} · ${ep.gpu ? (ep.gpu > 1 ? ep.gpu + ' GPUs' : 'GPU') : 'CPU'}${ep.node ? ' on ' + h(ep.node) : ''} · ${left(ep.expires)}</div></div>
       <button class="btn btn-outline-danger" id="del"><i class="bi bi-trash me-1"></i>Delete</button></div>
     ${waiting ? (ep.state === 'failed' ? alertBox(`Failed: ${ep.why}. Check the Logs tab.`)
        : alertBox(`${ep.state[0].toUpperCase() + ep.state.slice(1)}${ep.why ? ': ' + ep.why : ''}. This page refreshes by itself.`, 'warning', 'hourglass-split')) : ''}
@@ -528,7 +532,7 @@ with mlflow.start_run():
     <div class="card border-0 shadow-sm"><div class="card-body small"><h2 class="h6">Good to know</h2><ul class="mb-0">
       <li>Train with the cluster's containers (ml-classic, pytorch-mlflow): the serving images use the same library versions.</li>
       <li>Jobs log in to MLflow with the token in <code>~/.mlflow/credentials</code>; the <a href="${h(ui)}" target="_blank" rel="noopener">MLflow UI</a> uses your cluster password.</li>
-      <li>One GPU per person at a time. Endpoints stop after their hours (max ${ME.endpoint_hours}); deploy again to restart.</li></ul></div></div>`;
+      <li>You may use ${ME.limits.gpus} GPU${ME.limits.gpus === 1 ? '' : 's'} at a time. Endpoints stop after their hours (default ${ME.limits.default_hours}, max ${ME.limits.max_hours}); deploy again to restart. The admin can give you more.</li></ul></div></div>`;
   wireCopies();
 }
 

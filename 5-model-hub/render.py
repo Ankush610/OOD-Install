@@ -6,8 +6,9 @@ Two runtimes:
           user's MLflow token (Secret mlflow-creds), then `mlflow models serve` answers /invocations.
   vllm    LLM folder on disk (MODELS_ROOT or ~/models, read-only PVCs). OpenAI API, needs an API key.
 
-Every pod runs as the user (the UID policy insists), goes through slurm-bridge (a Slurm job with a time limit),
-and asks for at most one GPU of the given type.
+Every pod runs as the user (the UID policy insists), goes through slurm-bridge (a Slurm job with a time limit,
+which the pod-has-time-limit policy insists on) and asks for 0..MAX_GPUS GPUs; the user's quota is the real limit.
+vLLM with 2+ GPUs splits the model across them (tensor parallel); they come from one node (one pod = one node).
 
 A bare Pod, not a Deployment, on purpose (slurm-bridge 1.2.2, see AI-Stack version-1 build-log 2026-10-01):
   - slurm-bridge reads the slurmjob.* annotations from the pod's TOP owner. Under a Deployment that is the
@@ -25,6 +26,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 NAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$")      # k8s name, short enough for "-key" suffixes
+MAX_GPUS = 8                                                     # one node's worth; the quota decides per user
 
 
 def endpoint(runtime, p):
@@ -38,16 +40,18 @@ def endpoint(runtime, p):
         raise ValueError(f"bad endpoint name {p['name']!r}: lowercase letters, digits, '-', max 42")
     uid, gid, hours = int(p["uid"]), int(p["gid"]), int(p["hours"])
     gpus = int(p.get("gpus", "1" if runtime == "vllm" else "0"))
-    if gpus not in (0, 1):
-        raise ValueError("gpus must be 0 or 1")
+    if not 0 <= gpus <= MAX_GPUS:
+        raise ValueError(f"gpus must be 0..{MAX_GPUS}")
+    if hours < 1:
+        raise ValueError("hours must be at least 1")
     if gpus and not p.get("gpu_type"):
-        raise ValueError("gpus=1 needs gpu_type (Slurm GPU type, e.g. a30)")
+        raise ValueError("gpus > 0 needs gpu_type (Slurm GPU type, e.g. a30)")
     ns, name = f"u-{p['user']}", p["name"]
     cpu, mem = p.get("cpu", "4" if gpus else "2"), p.get("memory", "32Gi" if gpus else "4Gi")
     expires = (datetime.now(timezone.utc) + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
     labels = {"app": name, "model-hub/runtime": runtime}
-    limits = {"cpu": cpu, "memory": mem, **({"nvidia.com/gpu": "1"} if gpus else {})}
-    # No gres annotation: slurm-bridge derives gres/gpu=1 from the nvidia.com/gpu limit (GPU types: parked issue)
+    limits = {"cpu": cpu, "memory": mem, **({"nvidia.com/gpu": str(gpus)} if gpus else {})}
+    # No gres annotation: slurm-bridge derives gres/gpu=N from the nvidia.com/gpu limit
     annotations = {
         "slurmjob.slinky.slurm.net/partition": p["partition"],
         "slurmjob.slinky.slurm.net/timelimit": str(hours * 60),
@@ -92,6 +96,8 @@ def endpoint(runtime, p):
                     {"name": "shm", "emptyDir": {"medium": "Memory", "sizeLimit": "8Gi"}}]
         args = ["--model", p.get("base_path") or p["model_path"], "--served-model-name", name,
                 "--port", "8080", "--max-model-len", p.get("max_model_len", "8192")]
+        if gpus > 1:                                                   # e.g. a 70B model on 2 GPUs (NVLink)
+            args += ["--tensor-parallel-size", str(gpus)]
         if p.get("base_path"):                                         # LoRA: base model + the user's adapter
             args += ["--enable-lora", "--lora-modules", f"{name}-lora={p['model_path']}"]
         probe = "/health"
@@ -144,7 +150,14 @@ def test():
     lora = endpoint("vllm", {**base, "name": "q2", "image": "i", "model_path": "/my-models/x/v1",
                              "base_path": "/models/base/q", "gpu_type": "a30"})["items"][1]
     assert "--enable-lora" in lora["spec"]["containers"][0]["args"]
-    for bad in ({"name": "Bad_Name"}, {"gpus": "2"}, {"gpus": "1", "gpu_type": ""}):
+    assert "--tensor-parallel-size" not in vd["spec"]["containers"][0]["args"]
+    v2 = endpoint("vllm", {**base, "name": "q70", "image": "i", "model_path": "/models/base/q", "gpu_type": "h100",
+                           "gpus": "2"})["items"][1]["spec"]["containers"][0]
+    assert v2["resources"]["limits"]["nvidia.com/gpu"] == "2"
+    assert v2["args"][v2["args"].index("--tensor-parallel-size") + 1] == "2"
+    assert endpoint("mlflow", {**base, "hours": "96"})["items"][0]["metadata"]["annotations"][
+        "slurmjob.slinky.slurm.net/timelimit"] == "5760"
+    for bad in ({"name": "Bad_Name"}, {"gpus": "9"}, {"gpus": "-1"}, {"gpus": "1", "gpu_type": ""}, {"hours": "0"}):
         try:
             endpoint("mlflow", {**base, **bad}); raise AssertionError(f"accepted {bad}")
         except ValueError:

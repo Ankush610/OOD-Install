@@ -9,6 +9,7 @@ Deploy registered MLflow models (ML, DL, LLM) as endpoints from OOD. Design and 
 sudo bash 1-setup.sh          # once (+ after every slurm-bridge helm upgrade): modelhub account + MODELS_ROOT, pod UID policy,
                               # GPU DeviceClass(es), DynamicResources in slurm-bridge's scheduler, model-register -> /home/apps/bin
 sudo bash 2-sync-users.sh     # every LDAP user (or: 2-sync-users.sh <user> ...); add-user.sh runs it for new people
+                              # run it right after 1-setup.sh: the time-limit policy needs each namespace's max-hours
 sudo bash 3-test-tenancy.sh <userA> <userB>   # proves the rules, acting as userA; cleans up after itself
 bash 4-images.sh              # no root: build + push the serving images, mirror vLLM; tags -> images/built.env
 bash 5-test-serving.sh        # no root: models trained in the ML SIF load + answer in mlflow-serve-ml (local podman)
@@ -38,7 +39,19 @@ A30 is reserved in Slurm, but the pod's DRA ResourceClaim is never allocated, so
 |---|---|---|
 | namespace `u-<user>` | labels `aistack/uid`, `aistack/gid`, `aistack/slurm-bridge=true`, PSA `restricted` | pods run as the user (policy), become Slurm jobs, can't use hostPath/root |
 | RoleBinding `edit` | `u-<user>` only | deploy, logs, delete in their own namespace; nothing elsewhere; can't relabel it |
-| ResourceQuota `gpus` | `USER_GPU_QUOTA` for `nvidia.com/gpu` and each typed GPU class, 0 for the operator's catch-all classes | a direct ResourceClaim can't get around the limit |
+| ResourceQuota `gpus` | the user's GPU limit (`USER_GPU_QUOTA`, or their exception) for `nvidia.com/gpu` and each typed GPU class, 0 for the operator's catch-all classes; annotation `model-hub/max-hours` | a direct ResourceClaim can't get around the limit; the app reads the limits from here |
+| namespace labels `aistack/gpus`, `aistack/max-hours`, `aistack/custom-limits` | from `site.conf`, or the admin's exception (`--gpus`, `--max-hours`; `--reset`) | `pod-has-time-limit` rejects any pod over `max-hours` (or with no time limit, or asking for the whole node) |
+
+## Limits (GPUs at once, longest run)
+
+```bash
+sudo bash 2-sync-users.sh --show                  # everyone's limits
+sudo bash 2-sync-users.sh bob --gpus 2            # exception: bob may hold 2 GPUs
+sudo bash 2-sync-users.sh bob --max-hours 240     # exception: bob's endpoints may run 10 days
+sudo bash 2-sync-users.sh bob --reset             # back to site.conf
+```
+Everyone else follows `site.conf` (`USER_GPU_QUOTA`, `ENDPOINT_HOURS_DEFAULT`, `ENDPOINT_HOURS_MAX`): change a value,
+rerun `2-sync-users.sh`. Exceptions survive. Running endpoints keep the time they started with.
 | PVCs `models-ro`, `my-models` | `MODELS_ROOT` and `~/models`, read-only, over NFS from `NFS_SERVER` | the only storage a pod can mount |
 | `~/.kube/aistack.config` | 0600, client certificate CN=`<user>`, 1 year, default namespace `u-<user>`; `~/.kube/config` links to it if the user had none | the OOD app and `kubectl` act as the user; rerun renews when < 30 days are left |
 
@@ -71,6 +84,10 @@ A30 is reserved in Slurm, but the pod's DRA ResourceClaim is never allocated, so
 | `6-test-endpoints.sh`: `Cannot set a deleted experiment 'mh-test-<user>'` | the experiment was deleted in the MLflow UI (soft delete: it sits in the trash, name still taken) | fixed: `register()` restores it first; by hand: restore it in the MLflow UI |
 | torch endpoint exits: `exported by torch.export API ... weights / buffers on 'cpu' device, it can't be loaded on 'cuda'` | MLflow 3.x logs torch as pt2 by default, and MLflow only loads a pt2 model on the device it was exported on | fixed in the image: `images/mlflow-serve-torch/sitecustomize.py` moves it to the serving device (`move_to_device_pass`); rebuild with `4-images.sh` |
 | a user can't see an admin base model in Model Hub | MLflow's `default_permission = NO_PERMISSIONS`: each user needs a READ grant | `sudo bash ../3-mlflow/3-sync-tokens.sh` (grants READ on every `public=true` model; add-user.sh runs it for new people) |
+| deploy / pod: `pods need annotation slurmjob.slinky.slurm.net/timelimit` | a pod without a time limit (would run 365 days) | Model Hub sets it; with `kubectl` add the annotation (minutes) |
+| deploy / pod: `time limit N min is over your maximum of H hours` | asked for more than the user's `max-hours` | pick fewer hours, or the admin: `2-sync-users.sh <user> --max-hours H` |
+| pod: `this namespace has no aistack/max-hours label` | `1-setup.sh` added the policy but `2-sync-users.sh` hasn't run since | `sudo bash 2-sync-users.sh` |
+| deploy: `exceeded quota: gpus` | the user's GPUs are all in use (another endpoint) | stop one, or the admin: `--gpus 2` |
 | `2-sync-users.sh`: `Run 1-setup.sh first` | no UID policy yet; a user namespace without it would let pods claim any UID | run `1-setup.sh` |
 | test pod stays `Pending`, no Slurm job | namespace not labelled `aistack/slurm-bridge=true`, or slurm-bridge still on its list config | `kubectl -n slurm get cm slurm-bridge-config -o yaml` must show `managedNamespaceSelector` |
 | user's `kubectl`: `Unauthorized` | certificate expired or cluster CA changed | rerun `2-sync-users.sh <user>` |

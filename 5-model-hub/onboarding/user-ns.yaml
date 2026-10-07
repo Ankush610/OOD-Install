@@ -3,6 +3,9 @@
 #   labels: aistack/uid, aistack/gid -> uid-policy.yaml pins every pod here to this uid/gid
 #           aistack/slurm-bridge     -> slurm-bridge turns the pods into Slurm jobs
 #           pod-security restricted  -> no hostPath / inline nfs / root / privileged: the PVCs below are the only storage
+#           aistack/gpus, aistack/max-hours -> this user's limits (uid-policy.yaml checks max-hours on every pod;
+#                                    the GPU number goes into the ResourceQuota). aistack/custom-limits=true: an
+#                                    admin exception, kept when site.conf's defaults change
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -12,6 +15,9 @@ metadata:
     aistack/uid: "${USER_UID}"
     aistack/gid: "${USER_GID}"
     aistack/slurm-bridge: "true"
+    aistack/gpus: "${USER_GPUS}"
+    aistack/max-hours: "${USER_MAX_HOURS}"
+    aistack/custom-limits: "${USER_CUSTOM}"
     pod-security.kubernetes.io/enforce: restricted
 ---
 # The user may do anything in their own namespace (deploy, logs, delete) and nothing outside it.

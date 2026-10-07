@@ -26,7 +26,12 @@ pod() {  # pod <name> <ns> <uid> <gid> [gpu|claim:<name>]  -> pod YAML on stdout
   cat <<EOF
 apiVersion: v1
 kind: Pod
-metadata: { name: $1, namespace: $2, labels: { app: mh-test } }
+metadata:
+  name: $1
+  namespace: $2
+  labels: { app: mh-test }
+  # pod-has-time-limit: every pod here is a Slurm job, so it needs a time limit (minutes) and must share the node
+  annotations: { slurmjob.slinky.slurm.net/timelimit: "${TL:-10}", slurmjob.slinky.slurm.net/exclusive: "false" }
 spec:
   tolerations: [{ key: slinky.slurm.net/managed-node, operator: Exists, effect: NoExecute }]
   securityContext: { runAsUser: $3, runAsGroup: $4, runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
@@ -64,6 +69,13 @@ expect_deny "pod as root in u-$A is rejected"        "uid/gid|runAsUser|runAsNon
 expect_deny "pod with no securityContext rejected"   "uid/gid|runAsUser|runAsNonRoot|securityContext" \
             kA create --dry-run=server -f <(pod t u-"$A" "$uidA" "$gidA" | sed '/^  securityContext:/d')
 
+echo "-- Time limit policy (max $(kubectl get ns "u-$A" -o jsonpath='{.metadata.labels.aistack/max-hours}') h for $A)"
+maxh=$(kubectl get ns "u-$A" -o jsonpath='{.metadata.labels.aistack/max-hours}')
+expect_deny "pod with no time limit rejected"         "timelimit"   kA create --dry-run=server -f <(pod t u-"$A" "$uidA" "$gidA" | sed '/slurmjob/d; /^  annotations:/d')
+expect_deny "pod over the max ($((maxh + 1)) h) rejected"  "over your maximum" kA create --dry-run=server -f <(TL=$(( (maxh + 1) * 60 )) pod t u-"$A" "$uidA" "$gidA")
+expect_ok   "pod at the max ($maxh h) accepted"                     kA create --dry-run=server -f <(TL=$(( maxh * 60 )) pod t u-"$A" "$uidA" "$gidA")
+expect_deny "pod asking for the whole node rejected"  "exclusive"   kA create --dry-run=server -f <(pod t u-"$A" "$uidA" "$gidA" | sed 's/exclusive: "false"/exclusive: "true"/')
+
 echo "-- slurm-bridge: a real pod becomes a Slurm job"
 kA create -f <(pod mh-test-cpu u-"$A" "$uidA" "$gidA") >/dev/null
 for _ in $(seq 30); do ph=$(kA -n "u-$A" get pod mh-test-cpu -o jsonpath='{.status.phase}'); [ "$ph" = Running ] && break; sleep 2; done
@@ -72,7 +84,7 @@ if [ "$ph" = Running ] && [[ $sched == slurm-bridge-scheduler* ]]; then ok "cpu 
 else bad "cpu pod via slurm-bridge" "phase=$ph scheduler/node=$sched"; fi
 squeue -h -p "$BRIDGE_PARTITION" -o '%i %j %u %T %N' | sed 's/^/      slurm: /'
 
-echo "-- GPU quota ($USER_GPU_QUOTA per user)"
+echo "-- GPU quota ($(kubectl get ns "u-$A" -o jsonpath='{.metadata.labels.aistack/gpus}') for $A)"
 kA create -f <(pod mh-test-gpu u-"$A" "$uidA" "$gidA" gpu) >/dev/null 2>&1 && ok "first GPU pod accepted (may wait for a free GPU)" \
   || bad "first GPU pod accepted" "$(kA create --dry-run=server -f <(pod x u-"$A" "$uidA" "$gidA" gpu) 2>&1)"
 expect_deny "second GPU pod rejected"                "exceeded quota" kA create --dry-run=server -f <(pod mh-test-gpu2 u-"$A" "$uidA" "$gidA" gpu)

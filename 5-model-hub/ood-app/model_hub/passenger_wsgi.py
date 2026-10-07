@@ -204,13 +204,30 @@ def ensure_mlflow_secret():
     kubectl("apply", "-f", "-", stdin=json.dumps(secret))
 
 
+def limits():
+    """This user's limits, as 2-sync-users.sh set them: GPUs = their ResourceQuota (the hard limit), max hours =
+    its annotation (the pod-has-time-limit policy enforces the same number). Users can read but not change either."""
+    try:
+        q = kjson("get", "resourcequota", "gpus")
+        gpus = int(q["spec"]["hard"].get("requests.nvidia.com/gpu", "0"))
+        max_hours = int(q["metadata"].get("annotations", {}).get("model-hub/max-hours", SITE["hours_max"]))
+    except (Fail, ValueError, KeyError):
+        gpus, max_hours = 1, SITE["hours_max"]
+    return {"gpus": gpus, "max_hours": max_hours, "default_hours": min(SITE["hours_default"], max_hours)}
+
+
 def deploy(body):
     name, version = body["model"], int(body["version"])
     info = model_version(name, version)
     ep = str(body.get("endpoint") or re.sub(r"[^a-z0-9-]+", "-", f"{name}-v{version}".lower()).strip("-"))[:42].strip("-")
-    gpus = 1 if body.get("gpu") else 0
+    lim = limits()
+    gpus = max(1, int(body.get("gpus", 1))) if body.get("gpu") else 0
+    if gpus > lim["gpus"]:
+        raise Fail(400, f"you may use {lim['gpus']} GPU(s) at a time; ask the admin for more")
     gpu_type = body.get("gpu_type") or (SITE["gpu_types"][0] if SITE["gpu_types"] else "")
-    hours = max(1, min(int(body.get("hours", SITE["endpoint_hours"])), SITE["endpoint_hours"]))
+    hours = int(body.get("hours") or lim["default_hours"])
+    if not 1 <= hours <= lim["max_hours"]:
+        raise Fail(400, f"run time must be 1..{lim['max_hours']} hours; longer runs: ask the admin")
     p = {"name": ep, "user": USER, "uid": UID, "gid": GID, "partition": SITE["partition"], "hours": hours,
          "gpus": gpus, "gpu_type": gpu_type}
     if info["runtime"] == "vllm":
@@ -221,7 +238,7 @@ def deploy(body):
             inpod = "/my-models" + path[len(HOME + "/models"):]
         else:
             raise Fail(400, f"{path} is not under {SITE['models_root']} or ~/models: the endpoint can't mount it")
-        p.update(image=SITE["images"]["vllm"], model_path=inpod, gpus=1, model_uri=f"models:/{name}/{version}")
+        p.update(image=SITE["images"]["vllm"], model_path=inpod, gpus=max(gpus, 1), model_uri=f"models:/{name}/{version}")
     else:
         if info["image"] == "ml":
             p["gpus"] = 0                                     # classic ML is CPU only
@@ -241,7 +258,17 @@ def deploy(body):
     return {"endpoint": ep}
 
 
-def pod_state(p):
+def queue_positions():
+    """{job name: place among the waiting jobs of the partition}, best effort (squeue lists in priority order)."""
+    try:
+        out = subprocess.run([os.path.join(SITE.get("slurm_bin", ""), "squeue"), "-h", "-t", "PD", "-p", SITE["partition"],
+                              "--sort=-p,i", "-o", "%j"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    return {j: i for i, j in enumerate(out.split(), 1)}
+
+
+def pod_state(p, queue=None):
     """One word + a reason, from what k8s and slurm-bridge report."""
     if not p:                                    # slurm-bridge deletes the pod when its Slurm job ends
         return "stopped", "its time is up (or it was stopped): deploy again to restart it"
@@ -252,7 +279,9 @@ def pod_state(p):
             return "failed", f"{c['name']}: {w['reason']} {w.get('message', '')}".strip()
     if st.get("phase") == "Pending":
         if not p["spec"].get("nodeName"):
-            return "queued", "waiting for Slurm to give it a node" + (" and a GPU" if gpu_of(p) else "")
+            pos = (queue or {}).get(p["metadata"].get("annotations", {}).get("slurmjob.slinky.slurm.net/job-name"))
+            return "queued", ("waiting for a free GPU" if gpu_of(p) else "waiting for Slurm to give it a node") + \
+                (f" (number {pos} in the queue)" if pos else "")
         return "loading", "starting the container"
     ready = any(c.get("type") == "Ready" and c.get("status") == "True" for c in st.get("conditions", []))
     if ready:
@@ -263,7 +292,7 @@ def pod_state(p):
 
 
 def gpu_of(pod):
-    return any("nvidia.com/gpu" in (c.get("resources", {}).get("limits") or {}) for c in pod["spec"]["containers"])
+    return sum(int((c.get("resources", {}).get("limits") or {}).get("nvidia.com/gpu", 0)) for c in pod["spec"]["containers"])
 
 
 def endpoints():
@@ -271,15 +300,16 @@ def endpoints():
     # endpoint is still listed
     svcs = kjson("get", "svc", "-l", "model-hub/runtime")["items"]
     pods = {p["metadata"]["name"]: p for p in kjson("get", "pods", "-l", "model-hub/runtime")["items"]}
+    queue = queue_positions() if any(not p["spec"].get("nodeName") for p in pods.values()) else {}
     out = []
     for s in svcs:
         name, ann = s["metadata"]["name"], s["metadata"].get("annotations", {})
         pod = pods.get(name)
-        state, why = pod_state(pod)
+        state, why = pod_state(pod, queue)
         rt = s["metadata"]["labels"].get("model-hub/runtime")
         ctr = pod["spec"]["containers"][0] if pod else {}
         out.append({"name": name, "runtime": rt, "model": ann.get("model-hub/model"), "expires": ann.get("model-hub/expires"),
-                    "state": state, "why": why, "image": ctr.get("image"), "gpu": bool(pod and gpu_of(pod)),
+                    "state": state, "why": why, "image": ctr.get("image"), "gpu": gpu_of(pod) if pod else 0,
                     "node": pod["spec"].get("nodeName") if pod else None, "ip": s["spec"].get("clusterIP"),
                     "path": "/v1/chat/completions" if rt == "vllm" else "/invocations"})
     return sorted(out, key=lambda e: e["name"])
@@ -317,7 +347,7 @@ def route(method, path, body):
     a = parts[1:]
     if method == "GET" and a == ["me"]:
         return {"user": USER, "namespace": NS, "mlflow": os.path.isfile(CREDS), "kube": os.path.isfile(KUBECONFIG),
-                "gpu_types": SITE["gpu_types"], "endpoint_hours": SITE["endpoint_hours"],
+                "gpu_types": SITE["gpu_types"], "limits": limits(),
                 "mlflow_ui": SITE["mlflow_ui"], "models_root": SITE["models_root"],
                 "ssh": SITE.get("ssh", {})}
     if method == "GET" and a == ["models"]:

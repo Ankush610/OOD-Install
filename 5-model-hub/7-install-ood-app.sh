@@ -36,7 +36,8 @@ json.dump({
     "images": {"ml": "$MLFLOW_SERVE_ML", "torch": "$MLFLOW_SERVE_TORCH", "vllm": "$VLLM_OPENAI"},
     "gpu_types": [t for t in "$gpu_types".split(",") if t],
     "partition": "$BRIDGE_PARTITION",
-    "endpoint_hours": $ENDPOINT_HOURS,
+    "hours_default": $ENDPOINT_HOURS_DEFAULT, "hours_max": $ENDPOINT_HOURS_MAX,   # per-user limits: their quota
+    "slurm_bin": "$SLURM_BIN",
     "models_root": "$MODELS_ROOT",
     "ssh": {"login": "$MASTER_HOST", "jump": "$SSH_JUMP"},
 }, open(sys.argv[1], "w"), indent=1)

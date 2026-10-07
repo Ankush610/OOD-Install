@@ -50,3 +50,47 @@ spec:
   matchResources:
     namespaceSelector:
       matchExpressions: [{ key: aistack/uid, operator: Exists }]
+---
+# Cluster-wide, once (1-setup.sh). Every pod in a user namespace is a Slurm job (slurm-bridge), so it must carry a
+# time limit in whole minutes, at most the namespace's aistack/max-hours (set by 2-sync-users.sh). Without the
+# annotation slurm-bridge submits the job with the partition's limit (365 days here). It must also share the node
+# (exclusive "false"): slurm-bridge's default is the whole node, even for a 2-CPU pod.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: { name: pod-has-time-limit }
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE"]                  # Slurm takes the limit at creation; later edits change nothing,
+      resources: ["pods"]                     # and checking updates could block slurm-bridge cleaning up older pods
+  variables:
+  - name: ann
+    expression: "has(object.metadata.annotations) ? object.metadata.annotations : {}"
+  - name: limit
+    expression: "variables.ann[?'slurmjob.slinky.slurm.net/timelimit'].orValue('')"
+  - name: maxHours
+    expression: "namespaceObject.metadata.labels[?'aistack/max-hours'].orValue('')"
+  validations:
+  - expression: "variables.maxHours.matches('^[0-9]+$')"
+    message: "this namespace has no aistack/max-hours label: ask the admin to run 5-model-hub/2-sync-users.sh"
+  - expression: "variables.limit.matches('^[0-9]+$') && int(variables.limit) > 0"
+    message: "pods need annotation slurmjob.slinky.slurm.net/timelimit (whole minutes, > 0)"
+  - expression: >-
+      !variables.limit.matches('^[0-9]+$') || !variables.maxHours.matches('^[0-9]+$') ||
+      int(variables.limit) <= int(variables.maxHours) * 60
+    messageExpression: "'time limit ' + variables.limit + ' min is over your maximum of ' + variables.maxHours + ' hours'"
+  - expression: "variables.ann[?'slurmjob.slinky.slurm.net/exclusive'].orValue('') == 'false'"
+    message: "pods need annotation slurmjob.slinky.slurm.net/exclusive: \"false\" (otherwise Slurm gives them the whole node)"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: { name: pod-has-time-limit }
+spec:
+  policyName: pod-has-time-limit
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions: [{ key: aistack/uid, operator: Exists }]
