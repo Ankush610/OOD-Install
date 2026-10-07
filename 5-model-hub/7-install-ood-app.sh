@@ -5,7 +5,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-source "$HERE/../../site.conf"
+source "$HERE/../site.conf"
 export PATH="$SLURM_BIN:$PATH" SLURM_CONF
 [ "$(id -u)" = 0 ] || { echo "Run with sudo." >&2; exit 1; }
 APPS=/var/www/ood/apps/sys

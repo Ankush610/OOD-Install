@@ -7,7 +7,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-source "$HERE/../../site.conf"
+source "$HERE/../site.conf"
 IMG=${1:-$(sed -n 's/^MLFLOW_SERVE_ML=//p' "$HERE/images/built.env" 2>/dev/null)}
 [ -n "$IMG" ] || { echo "usage: bash 5-test-serving.sh <image>   (or run 4-images.sh first)" >&2; exit 1; }
 W=$(mktemp -d); trap 'rm -rf "$W"; podman rm -f mh-serve-test >/dev/null 2>&1 || true' EXIT

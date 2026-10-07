@@ -6,7 +6,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-source "$HERE/../../site.conf"
+source "$HERE/../site.conf"
 export PATH="$SLURM_BIN:$PATH" SLURM_CONF                    # sudo drops both
 [ "$(id -u)" = 0 ] || { echo "Run with sudo (creates $MODELHUB_USER, owns $MODELS_ROOT)." >&2; exit 1; }
 export KUBECONFIG=${KUBECONFIG:-/etc/kubernetes/admin.conf}
@@ -76,4 +76,4 @@ kubectl -n "$BRIDGE_NS" get cm scheduler-config -o jsonpath='{.data.scheduler-co
 grep -q @ /home/apps/bin/model-register && echo "WARNING: model-register still has an unfilled @VAR@" >&2
 echo
 echo "Next: put base models under $MODELS_ROOT/base (as $MODELHUB_USER), then sudo bash 2-sync-users.sh"
-echo "Admin base model: sudo /home/apps/bin/model-register --public $MODELS_ROOT/base/<org>/<model> <name>, then sudo bash ../../3-mlflow/3-sync-tokens.sh"
+echo "Admin base model: sudo /home/apps/bin/model-register --public $MODELS_ROOT/base/<org>/<model> <name>, then sudo bash ../3-mlflow/3-sync-tokens.sh"

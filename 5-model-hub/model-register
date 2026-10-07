@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # model-register: add a Hugging Face model folder to Model Hub (help text: usage() below).
-# Installed to /home/apps/bin by OOD-Install/5-model-hub/version2/1-setup.sh, which fills in the placeholders.
+# Installed to /home/apps/bin by OOD-Install/5-model-hub/1-setup.sh, which fills in the placeholders.
 set -euo pipefail
 MODELS_ROOT=@MODELS_ROOT@ MLFLOW_DATA=@MLFLOW_DATA@ APPTAINER=@APPTAINER@ SIF=@ML_TRAIN_SIF@
 export MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-@MLFLOW_URI@}

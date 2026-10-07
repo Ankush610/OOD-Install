@@ -11,7 +11,7 @@
 set -uo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-source "$HERE/../../site.conf"; source "$HERE/images/built.env"
+source "$HERE/../site.conf"; source "$HERE/images/built.env"
 export PATH="$SLURM_BIN:$PATH" SLURM_CONF
 [ "$(id -u)" = 0 ] || { echo "Run with sudo (acts as the user)." >&2; exit 1; }
 U=${1:?usage: sudo bash 6-test-endpoints.sh <user> [ml] [llm] [torch] [--keep]}; shift
@@ -24,7 +24,7 @@ IFS=: read -r _ _ uid gid _ home _ < <(getent passwd "$U") || { echo "No user $U
 KC=$home/.kube/aistack.config; NS=u-$U
 [ -f "$KC" ] || { echo "No $KC: run 2-sync-users.sh $U first." >&2; exit 1; }
 creds=$home/.mlflow/credentials
-[ -f "$creds" ] || { echo "No $creds: run ../../3-mlflow/3-sync-tokens.sh first." >&2; exit 1; }
+[ -f "$creds" ] || { echo "No $creds: run ../3-mlflow/3-sync-tokens.sh first." >&2; exit 1; }
 kU() { kubectl --kubeconfig "$KC" -n "$NS" "$@"; }                    # every k8s call is the user's own
 asU() { sudo -u "$U" env HOME="$home" MLFLOW_TRACKING_URI="$MLFLOW_URI" "$@"; }
 gpu_type=$(sinfo -h -p "$BRIDGE_PARTITION" -o %G | sed -n 's/.*gpu:\([^:(,]*\):[0-9].*/\1/p' | head -1)

@@ -185,7 +185,7 @@ def model_card(name, version):
 # ---------- Kubernetes (kubectl, the user's kubeconfig) ----------
 def kubectl(*args, stdin=None, check=True):
     if not os.path.isfile(KUBECONFIG):
-        raise Fail(409, "No ~/.kube/aistack.config: ask the admin to run 5-model-hub/version1/2-sync-users.sh " + USER)
+        raise Fail(409, "No ~/.kube/aistack.config: ask the admin to run 5-model-hub/2-sync-users.sh " + USER)
     p = subprocess.run(["kubectl", "--kubeconfig", KUBECONFIG, "-n", NS, *args], input=stdin,
                        capture_output=True, text=True, timeout=60)
     if check and p.returncode != 0:

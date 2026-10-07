@@ -1,6 +1,0 @@
-numpy
-pandas
-cloudpickle
-torch
-torchvision
-triton

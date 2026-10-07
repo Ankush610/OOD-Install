@@ -1,9 +1,9 @@
-# 5-model-hub/version2
+# 5-model-hub
 
 Deploy registered MLflow models (ML, DL, LLM) as endpoints from OOD. Design and scope:
-`../../../AI-Stack/docs/model-hub/` (v1: `versions/version-1/`). Built part by part; this README grows with it.
+`../../AI-Stack/docs/model-hub/` (v1: `versions/version-1/`). Built part by part; this README grows with it.
 
-## Run (on master, after ../../3-mlflow)
+## Run (on master, after ../3-mlflow)
 
 ```bash
 sudo bash 1-setup.sh          # once (+ after every slurm-bridge helm upgrade): modelhub account + MODELS_ROOT, pod UID policy,
@@ -70,7 +70,7 @@ A30 is reserved in Slurm, but the pod's DRA ResourceClaim is never allocated, so
 | GPU pod Running with a Slurm job (A30 allocated in `scontrol show job`) but no `/dev/nvidia*`, `nvidia-smi` missing, vLLM `Failed to infer device type`, empty `status.extendedResourceClaimStatus` | a `helm upgrade` of slurm-bridge reset `scheduler-config`: no `DynamicResources` plugin, so the DRA ResourceClaim is never allocated | `sudo bash 1-setup.sh` (step 5), then redeploy the pod |
 | `6-test-endpoints.sh`: `Cannot set a deleted experiment 'mh-test-<user>'` | the experiment was deleted in the MLflow UI (soft delete: it sits in the trash, name still taken) | fixed: `register()` restores it first; by hand: restore it in the MLflow UI |
 | torch endpoint exits: `exported by torch.export API ... weights / buffers on 'cpu' device, it can't be loaded on 'cuda'` | MLflow 3.x logs torch as pt2 by default, and MLflow only loads a pt2 model on the device it was exported on | fixed in the image: `images/mlflow-serve-torch/sitecustomize.py` moves it to the serving device (`move_to_device_pass`); rebuild with `4-images.sh` |
-| a user can't see an admin base model in Model Hub | MLflow's `default_permission = NO_PERMISSIONS`: each user needs a READ grant | `sudo bash ../../3-mlflow/3-sync-tokens.sh` (grants READ on every `public=true` model; add-user.sh runs it for new people) |
+| a user can't see an admin base model in Model Hub | MLflow's `default_permission = NO_PERMISSIONS`: each user needs a READ grant | `sudo bash ../3-mlflow/3-sync-tokens.sh` (grants READ on every `public=true` model; add-user.sh runs it for new people) |
 | `2-sync-users.sh`: `Run 1-setup.sh first` | no UID policy yet; a user namespace without it would let pods claim any UID | run `1-setup.sh` |
 | test pod stays `Pending`, no Slurm job | namespace not labelled `aistack/slurm-bridge=true`, or slurm-bridge still on its list config | `kubectl -n slurm get cm slurm-bridge-config -o yaml` must show `managedNamespaceSelector` |
 | user's `kubectl`: `Unauthorized` | certificate expired or cluster CA changed | rerun `2-sync-users.sh <user>` |
