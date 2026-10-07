@@ -3,11 +3,11 @@
 # read-only model volumes, and their own k8s login (~/.kube/aistack.config, client certificate, CN=<user>).
 # Safe to rerun: existing objects are updated, a certificate with 30+ days left is kept.
 # Run on master after 1-setup.sh:  sudo bash 2-sync-users.sh [user ...]     (no names = every LDAP user)
-# ../1-ldap/add-user.sh runs it for each new person.
+# ../../1-ldap/add-user.sh runs it for each new person.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-source "$HERE/../site.conf"
+source "$HERE/../../site.conf"
 [ "$(id -u)" = 0 ] || { echo "Run with sudo (writes users' home dirs, signs certificates)." >&2; exit 1; }
 export KUBECONFIG=${KUBECONFIG:-/etc/kubernetes/admin.conf}
 kubectl get validatingadmissionpolicy pod-runs-as-namespace-owner >/dev/null 2>&1 ||

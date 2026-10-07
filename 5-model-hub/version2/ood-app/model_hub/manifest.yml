@@ -1,0 +1,6 @@
+---
+name: Model Hub
+category: Interactive Apps
+subcategory: Servers
+description: Deploy your MLflow models (ML, DL, LLM) as endpoints, try them in a playground, call them from scripts
+icon: fa://cubes

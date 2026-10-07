@@ -64,4 +64,4 @@ python3 -c 'import ast,sys; [ast.parse(open(f).read()) for f in sys.argv[1:]]' 3
 
 ## Sibling repo
 
-`../AI-Stack` holds the design docs (see its `CLAUDE.md`): `docs/cluster/` (architecture, `master:5000` registry, installed versions), `docs/model-hub/` (full Model Hub design; the current scope is `docs/model-hub/versions/version-1/`, whose `build-plan.md` lists what goes in `5-model-hub/`), and test manifests in `k8s/examples/` (slurm-bridge, DRA GPUs).
+`../AI-Stack` holds the design docs (see its `CLAUDE.md`): `docs/cluster/` (architecture, `master:5000` registry, installed versions), `docs/model-hub/` (full Model Hub design; the current scope is `docs/model-hub/versions/version-2/`; its `build-plan.md` lists what goes in `5-model-hub/version2/`. `5-model-hub/version1/` is the finished v1 (tag `v1`), kept as is), and test manifests in `k8s/examples/` (slurm-bridge, DRA GPUs).

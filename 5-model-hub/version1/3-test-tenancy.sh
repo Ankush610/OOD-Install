@@ -6,7 +6,7 @@
 set -uo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-source "$HERE/../site.conf"
+source "$HERE/../../site.conf"
 export PATH="$SLURM_BIN:$PATH" SLURM_CONF
 [ "$(id -u)" = 0 ] || { echo "Run with sudo (reads the users' kubeconfigs)." >&2; exit 1; }
 A=${1:?usage: sudo bash 3-test-tenancy.sh <userA> <userB>}; B=${2:?usage: sudo bash 3-test-tenancy.sh <userA> <userB>}

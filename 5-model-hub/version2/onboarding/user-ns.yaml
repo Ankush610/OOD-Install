@@ -1,0 +1,65 @@
+# One user's corner of k8s, filled by 2-sync-users.sh (envsubst): namespace u-<user>, their rights in it, and
+# read-only access to model weights. The GPU quota is added by the script (it depends on the GPU classes).
+#   labels: aistack/uid, aistack/gid -> uid-policy.yaml pins every pod here to this uid/gid
+#           aistack/slurm-bridge     -> slurm-bridge turns the pods into Slurm jobs
+#           pod-security restricted  -> no hostPath / inline nfs / root / privileged: the PVCs below are the only storage
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: u-${USER_NAME}
+  labels:
+    aistack/user: "${USER_NAME}"
+    aistack/uid: "${USER_UID}"
+    aistack/gid: "${USER_GID}"
+    aistack/slurm-bridge: "true"
+    pod-security.kubernetes.io/enforce: restricted
+---
+# The user may do anything in their own namespace (deploy, logs, delete) and nothing outside it.
+# `edit` can't change the namespace's labels or create PVs, so they can't loosen the rules above.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: owner, namespace: u-${USER_NAME} }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: edit }
+subjects: [{ apiGroup: rbac.authorization.k8s.io, kind: User, name: "${USER_NAME}" }]
+---
+# PVs are cluster-wide and bind to exactly one PVC (claimRef), so each user gets their own pair even for the
+# shared MODELS_ROOT. Pods run as the user, so NFS only shows them what the user may read anyway.
+apiVersion: v1
+kind: PersistentVolume
+metadata: { name: models-ro-${USER_NAME}, labels: { aistack/user: "${USER_NAME}" } }
+spec:
+  capacity: { storage: 1Ti }                       # informational for NFS
+  accessModes: [ReadOnlyMany]
+  persistentVolumeReclaimPolicy: Retain
+  mountOptions: [ro, nconnect=8]
+  nfs: { server: "${NFS_SERVER}", path: "${MODELS_ROOT}", readOnly: true }
+  claimRef: { namespace: u-${USER_NAME}, name: models-ro }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: models-ro, namespace: u-${USER_NAME} }
+spec:
+  storageClassName: ""
+  volumeName: models-ro-${USER_NAME}
+  accessModes: [ReadOnlyMany]
+  resources: { requests: { storage: 1Ti } }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata: { name: my-models-${USER_NAME}, labels: { aistack/user: "${USER_NAME}" } }
+spec:
+  capacity: { storage: 1Ti }
+  accessModes: [ReadOnlyMany]
+  persistentVolumeReclaimPolicy: Retain
+  mountOptions: [ro, nconnect=8]
+  nfs: { server: "${NFS_SERVER}", path: "${USER_HOME}/models", readOnly: true }
+  claimRef: { namespace: u-${USER_NAME}, name: my-models }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: my-models, namespace: u-${USER_NAME} }
+spec:
+  storageClassName: ""
+  volumeName: my-models-${USER_NAME}
+  accessModes: [ReadOnlyMany]
+  resources: { requests: { storage: 1Ti } }

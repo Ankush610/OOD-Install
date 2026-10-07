@@ -9,7 +9,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-source "$HERE/../site.conf"
+source "$HERE/../../site.conf"
 out=$HERE/images/built.env; : > "$out.new"
 
 exists() { curl -sf "http://$REGISTRY/v2/${1%:*}/tags/list" | grep -q "\"${1##*:}\""; }

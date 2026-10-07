@@ -74,9 +74,9 @@ done
 
 echo "== 7. Model Hub: namespace u-$U, GPU quota, k8s login (skipped if 5-model-hub isn't set up yet)"
 if KUBECONFIG=/etc/kubernetes/admin.conf kubectl get validatingadmissionpolicy pod-runs-as-namespace-owner >/dev/null 2>&1; then
-  bash "$HERE/../5-model-hub/2-sync-users.sh" "$U"
+  bash "$HERE/../5-model-hub/version2/2-sync-users.sh" "$U"
 else
-  echo "Model Hub not set up, skipped. Later: sudo bash 5-model-hub/2-sync-users.sh $U"
+  echo "Model Hub not set up, skipped. Later: sudo bash 5-model-hub/version2/2-sync-users.sh $U"
 fi
 
 echo "== 8. Check"

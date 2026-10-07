@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# model-register: add a Hugging Face model folder to Model Hub (help text: usage() below).
+# Installed to /home/apps/bin by OOD-Install/5-model-hub/version1/1-setup.sh, which fills in the placeholders.
+set -euo pipefail
+MODELS_ROOT=@MODELS_ROOT@ MLFLOW_DATA=@MLFLOW_DATA@ APPTAINER=@APPTAINER@ SIF=@ML_TRAIN_SIF@
+export MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-@MLFLOW_URI@}
+
+usage() { cat <<EOF
+NAME
+    model-register - add a Hugging Face model folder to Model Hub
+
+SYNOPSIS
+    model-register DIR NAME
+    sudo /home/apps/bin/model-register --public DIR NAME
+
+DESCRIPTION
+    Registers the model in DIR as a new version of NAME in MLflow, so you can
+    deploy it from OOD: Interactive Apps -> Model Hub (served by vLLM on a GPU).
+    The weights are not copied. MLflow only stores where they are.
+
+DIR MUST
+    - be under ~/models/ (yours) or $MODELS_ROOT/ (shared, admin)
+    - contain config.json and *.safetensors (what save_pretrained writes)
+    - be a full model, not a LoRA adapter (merge it first)
+
+OPTIONS
+    --public    Admin only (sudo, full path: sudo has its own PATH). Makes the
+                model visible to every user.
+                Then run: sudo bash 3-mlflow/3-sync-tokens.sh
+    -h, --help  Show this help.
+
+MODEL.yaml (optional, in DIR)
+    task: text-generation
+    license: apache-2.0
+    description: what this model is for
+
+EXAMPLES
+    model-register ~/models/my-llm/v1 my-llm
+    sudo /home/apps/bin/model-register --public $MODELS_ROOT/base/qwen/Qwen3.5-0.8B qwen3.5-0.8b
+EOF
+}
+public=0 args=()
+for a in "$@"; do case $a in --public) public=1 ;; -h|--help) usage; exit 0 ;; *) args+=("$a") ;; esac; done
+[ ${#args[@]} = 2 ] || { usage >&2; exit 2; }
+dir=$(realpath -e "${args[0]}") name=${args[1]}
+
+case $dir/ in
+  "$HOME"/models/?*|"$MODELS_ROOT"/?*) ;;
+  *) echo "$dir is not under ~/models/ or $MODELS_ROOT/: an endpoint can't mount it." >&2; exit 1 ;;
+esac
+if [ -f "$dir/adapter_config.json" ]; then
+  echo "$dir is a LoRA adapter. v1 serves full models only: merge it first," >&2
+  echo "  model.merge_and_unload().save_pretrained(dir), tokenizer.save_pretrained(dir)" >&2; exit 1
+fi
+[ -f "$dir/config.json" ] && compgen -G "$dir/*.safetensors" >/dev/null ||
+  { echo "$dir has no config.json + *.safetensors (save it with save_pretrained)." >&2; exit 1; }
+
+if [ "$public" = 1 ]; then
+  [ "$(id -u)" = 0 ] || { echo "--public needs sudo (it registers as the MLflow admin)." >&2; exit 1; }
+  who=admin
+  MLFLOW_TRACKING_PASSWORD=$(cat "$MLFLOW_DATA/admin.pass"); export MLFLOW_TRACKING_USERNAME=admin MLFLOW_TRACKING_PASSWORD
+elif [ "$(id -u)" = 0 ]; then
+  echo "Run as yourself (your MLflow token), or with --public for an admin model." >&2; exit 1
+else
+  who=$(id -un)
+fi
+
+# the SIF may not see DIR (only $HOME, /tmp and cwd are bound), so MODEL.yaml goes in as text
+v=$("$APPTAINER" exec "$SIF" python - "$name" "$dir" "$public" "$who" "$(cat "$dir/MODEL.yaml" 2>/dev/null || true)" <<'EOF' 2>&1 | grep -v -i warning | tail -1
+import os, sys, tempfile, yaml, mlflow
+from mlflow.exceptions import MlflowException
+name, path, public, who, text = sys.argv[1:6]
+meta = {"name": name, "format": "hf", "task": "text-generation", **(yaml.safe_load(text) or {}), "path": path}
+if meta["format"] != "hf":
+    sys.exit(f"MODEL.yaml format {meta['format']!r}: v1 serves Hugging Face folders (format: hf) only")
+c = mlflow.MlflowClient()
+# own experiment per person: names are global in MLflow. Deleted in the UI = in the trash, name still taken: restore
+exp = f"model-register-{who}"
+e = c.get_experiment_by_name(exp)
+if e and e.lifecycle_stage == "deleted":
+    c.restore_experiment(e.experiment_id)
+run = c.create_run(e.experiment_id if e else c.create_experiment(exp), run_name=name, tags={"model-hub/path": path})
+with tempfile.TemporaryDirectory() as d:
+    with open(f"{d}/MODEL.yaml", "w") as f:
+        yaml.safe_dump(meta, f, sort_keys=False)
+    c.log_artifact(run.info.run_id, f"{d}/MODEL.yaml")
+c.set_terminated(run.info.run_id)
+try:
+    c.create_registered_model(name, description=meta.get("description", ""))
+except MlflowException as ex:
+    if ex.error_code != "RESOURCE_ALREADY_EXISTS":
+        raise
+if public == "1":
+    c.set_registered_model_tag(name, "public", "true")
+# MLflow rejects a local path as the source: the version points at the run's MODEL.yaml, the folder is the path tag
+tags = {"path": path, "format": "hf", **({"base_model": str(meta["base_model"])} if meta.get("base_model") else {})}
+mv = c.create_model_version(name, source=f"{run.info.artifact_uri}/MODEL.yaml", run_id=run.info.run_id, tags=tags,
+                            description=meta.get("description", ""))
+print(mv.version)
+EOF
+) || true
+[[ $v =~ ^[0-9]+$ ]] || { echo "Registering failed: $v" >&2; exit 1; }
+echo "Registered $name version $v -> $dir"
+echo "Deploy it from OOD: Interactive Apps -> Model Hub."
+[ "$public" = 1 ] && echo "Now give everyone read access: sudo bash <OOD-Install>/3-mlflow/3-sync-tokens.sh"
+exit 0
