@@ -1,12 +1,20 @@
 # 4-vscode
 
-VS Code in the browser (**code-server**) as an OOD Interactive App: **Interactive Apps -> VS Code -> Launch**. Every user gets **their own session, running as them**, so they see exactly the files they can see on disk (their home, anything shared with them) and nothing else.
+VS Code in the browser (**code-server**) from an OOD page in the Model Hub look: **Interactive Apps -> VS Code**, pick where, **Launch**, then **Connect** on the session card. Every user gets **their own session, running as them**, so they see exactly the files they can see on disk (their home, anything shared with them) and nothing else.
 
 ```
                    one install on shared /home: $CODE_SERVER_ROOT/current/bin/code-server
-OOD "Launch" ──Slurm──►  ┌─ "Editor only" → partition viewer on master: 1 CPU (shared), VSCODE_MEM
+page "Launch" ──sbatch─►  ┌─ "Editor only" → partition viewer on master: 1 CPU (shared), VSCODE_MEM
                          └─ "GPU node: n x <type>" → GPU partition: n GPUs + n x their share of CPUs/RAM
 browser ◄── /rnode/<ip>/<port>/ (OOD proxy, per-session password) ──► code-server as <user>
+```
+
+**Why our own page, not OOD's batch_connect form:** same look as Model Hub and MLflow, and launch, status, Connect and Stop sit on one page.
+OnDemand runs the page as the logged-in user, so it simply calls `sbatch`, `squeue` and `scancel` as them. It is still
+one Slurm job per session (one code-server per user, see the Slurm note above): only the screen around it changed.
+These sessions don't show under OOD's **My Interactive Sessions**; the VS Code page lists them.
+
+```
 ```
 
 ## Run (on master, after ../1-ldap and ../2-ood)
@@ -52,7 +60,7 @@ SSH users themselves are not limited by Slurm: one of them running something hug
 | the process | a Slurm job, as the user | no, one per session |
 | files it can open | whatever the user can read on disk | no, Linux permissions |
 | extensions, settings, keybindings | `~/.local/share/code-server/` | no, theirs, kept between sessions |
-| session password | random per session, only on the owner's session card | no |
+| session password | random per session, in `~/.vscode-sessions/<job>.json` (mode 600), sent on **Connect** | no |
 
 Extensions install from **Open VSX** (open-vsx.org), not Microsoft's marketplace, so a few Microsoft-only ones (Pylance, Remote-SSH, Copilot) aren't there. Python, Jupyter, GitLens, Ruff and most others are. Nodes need internet for that, or users install `.vsix` files.
 
@@ -62,13 +70,10 @@ Extensions install from **Open VSX** (open-vsx.org), not Microsoft's marketplace
 |---|---|
 | `1-install-code-server.sh` | release tarball (resumes a dropped download) -> `CODE_SERVER_ROOT/<version>`, `current` symlink, checks `--version` on master and each compute node |
 | `2-slurm-viewer.sh` | sets `NodeName=<VIEWER_NODE> NodeHostname=<master>` from `slurmd -C` (98% of RAM) + `CoreSpecCount`/`MemSpecLimit`, and the `viewer` partition with `OverSubscribe=FORCE:n`; copies `slurm.conf` to the compute nodes; restarts slurmctld + master's slurmd only if the node line changed, then `scontrol reconfigure` |
-| `3-install-ood-app.sh` | fills `${...}` in `ood-app/vscode` from `site.conf` (`envsubst`), copies to `/var/www/ood/apps/sys/vscode` |
-| `ood-app/vscode/form.yml` | where (editor only, or `GPU node: n x <type>` for n = 1 .. GPUs per node, written in at install), hours |
+| `3-install-ood-app.sh` | copies `ood-app/vscode` to `/var/www/ood/apps/sys/vscode`, fills `${...}` in `job.sh` from `site.conf`, writes `site.json` (partitions, `VSCODE_MEM`, GPU sizes from `gpu-detect.sh`) |
 | `gpu-detect.sh` | reads `sinfo`: the GPU partition (`GPU_PARTITION=auto`: the default one with GPUs, else the first), GPU type, GPUs per node, and each GPU's share of the node (cores ÷ GPUs, 90% of RAM ÷ GPUs, smallest node) |
-| `ood-app/vscode/submit.yml.erb` | the Slurm options for each choice |
-| `ood-app/vscode/template/before.sh.erb` | node IP, free port, session password (`$PASSWORD` for code-server) |
-| `ood-app/vscode/template/script.sh.erb` | `cd` into the chosen folder, `exec code-server --auth password` |
-| `ood-app/vscode/view.html.erb` | **Connect to VS Code**: posts the password to code-server's login through `/rnode` |
+| `ood-app/vscode/passenger_wsgi.py` | the page (stdlib only, Model Hub's Bootstrap + `style.css`): choices, `sbatch` with the Slurm options for each, session list from `squeue -n vscode`, Connect, Stop (`scancel`). Deletes files older than 7 days in `~/.vscode-sessions` |
+| `ood-app/vscode/job.sh` | the Slurm job: free port, session password, starts code-server, writes `~/.vscode-sessions/<job>.json` once it answers (the page shows **Starting** until then), removes it on exit. Log: `~/.vscode-sessions/<job>.log` |
 
 `/rnode` (not `/node`) strips the `/rnode/<host>/<port>` prefix, because code-server expects to sit at `/`.
 
@@ -81,16 +86,16 @@ Set `CODE_SERVER_VERSION` in `site.conf`, rerun `1-install-code-server.sh` (it f
 | Symptom | Cause | Fix |
 |---|---|---|
 | `1-install-code-server.sh`: `unexpected end of file` / `Download failed` | the download dropped | rerun: it resumes the partial file |
-| session stays **Queued** | `viewer` is out of memory (sessions × `VSCODE_MEM` > RAM − `VIEWER_RESERVED_MEM_MB`), or no free GPU | `squeue -p viewer`; lower `VSCODE_MEM` or the reservation, or wait |
+| session stays **Waiting** | `viewer` is out of memory (sessions × `VSCODE_MEM` > RAM − `VIEWER_RESERVED_MEM_MB`), or no free GPU | `squeue -p viewer`; lower `VSCODE_MEM` or the reservation, or wait |
 | master **drained**, `Reason=Low RealMemory` | `RealMemory` above what the kernel reports | rerun `2-slurm-viewer.sh` (it takes 98% of `slurmd -C`), then `scontrol update nodename=<VIEWER_NODE> state=resume` |
-| launch fails: `undefined local variable or method '<field>'` | job templates (`template/*.erb`) get form values as `context.<field>`; only `submit.yml.erb` gets bare names | use `context.<field>` in templates, then rerun `3-install-ood-app.sh` |
-| a field meant for one choice shows for all | per-option hiding (`data-hide-*`) needs OOD's `bc_dynamic_js`, which is off by default | keep the form flat (it is): the GPU count is part of the "Where to run" choice |
 | GPU choices are wrong or missing after adding/changing GPU nodes | the form is written at install time from `sinfo` | rerun `3-install-ood-app.sh`, then Restart Web Server |
 | `sbatch` from VS Code's terminal fails, the same script works from SSH | the session is itself a Slurm job; its `SLURM_*` variables leaked into the new job (e.g. `SLURM_MEM_PER_NODE` vs `SLURM_MEM_PER_CPU`) | the job script clears `SLURM_*`/`SBATCH_*` before starting code-server; rerun `3-install-ood-app.sh` and start a new session |
 | cluster DNS down; coredns, KEDA, Prometheus… **Pending** (`untolerated taint`) | master's Slurm node is named like the k8s node (`NodeName=master`), so slurm-bridge taints master `NoExecute` | set `VIEWER_NODE` (≠ hostname), rerun `2-slurm-viewer.sh`: it renames the node and removes the taint |
 | code-server exits at once, printing nothing | `VSCODE_IPC_HOOK_CLI` is set (started from a VS Code terminal): it hands the folder to that editor and quits | `unset VSCODE_IPC_HOOK_CLI` (the job script does this) |
-| session starts then ends, `output.log`: `code-server did not start` | wrong path, or the folder can't be opened | check `CODE_SERVER_ROOT/current/bin/code-server --version` on that node; leave "Folder" empty |
-| **Connect** shows code-server's login page | the password didn't reach it (old session card, or `$PASSWORD` not exported) | relaunch; check `before.sh.erb` exports `PASSWORD` |
+| session starts then disappears, `~/.vscode-sessions/<job>.log`: `code-server did not start` | wrong `CODE_SERVER_ROOT`, or code-server crashed (the log shows why) | check `CODE_SERVER_ROOT/current/bin/code-server --version` on that node |
+| page: `Could not ask Slurm for your sessions` | `SLURM_BIN` in `site.conf` is not the folder of `squeue`/`sbatch` | fix it, rerun `3-install-ood-app.sh` |
+| old sessions under **My Interactive Sessions** show errors after the upgrade | they were started by the old batch_connect form, which is gone | they still run until their hours end; `scancel <job>` to end them now |
+| **Connect** shows code-server's login page | the password didn't reach it (`$PASSWORD` not exported) | relaunch; check `job.sh` exports `PASSWORD` |
 | `slurmd: command not found` (or `sinfo`, `srun`) under `sudo` | sudo's `secure_path` drops `/usr/local/bin` and `/usr/local/sbin` | the scripts add `SLURM_BIN` and its `sbin` to `PATH`; set `SLURM_BIN` in `site.conf` to the folder of `sbatch` |
 | `2-slurm-viewer.sh`: `Could not copy to <node>` | no root ssh to that node | copy `SLURM_CONF` there by hand (it must match everywhere), rerun |
 | extension missing from the marketplace | not on Open VSX | install a `.vsix` (Extensions → … → Install from VSIX) |

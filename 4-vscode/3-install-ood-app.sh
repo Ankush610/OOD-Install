@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Install the "VS Code" OOD Interactive App: fills ${...} in ood-app/vscode from ../site.conf and copies it
-# to /var/www/ood/apps/sys/vscode. Edit ood-app/ and rerun; never edit the installed copy.
+# Install the "VS Code" OOD page (Passenger app, Model Hub look): copies ood-app/vscode to /var/www/ood/apps/sys/vscode,
+#   fills ${...} in job.sh from ../site.conf, writes site.json (partitions, GPU sizes from Slurm).
+# Edit ood-app/ and rerun; never edit the installed copy.
 # Run on master after 1 and 2: sudo bash 3-install-ood-app.sh     then Restart Web Server in OOD
 set -euo pipefail
 
@@ -28,20 +29,25 @@ else
   echo "no GPU partition: the form offers Editor only"
 fi
 
-echo "== 3. Render + copy -> $APP"
-export CLUSTER_ID CODE_SERVER_ROOT GPU_PARTITION GPU_MAX CPUS_PER_GPU MEM_PER_GPU_MB VIEWER_PARTITION VSCODE_MEM VSCODE_IDLE_SECONDS
-vars='$CLUSTER_ID $CODE_SERVER_ROOT $GPU_PARTITION $GPU_MAX $CPUS_PER_GPU $MEM_PER_GPU_MB $VIEWER_PARTITION $VSCODE_MEM $VSCODE_IDLE_SECONDS'
+echo "== 3. Copy -> $APP, job.sh from site.conf, site.json for the page"
 rm -rf "$APP"
 cp -r "$HERE/ood-app/vscode" "$APP"
-find "$APP" -type f | while read -r f; do envsubst "$vars" < "$f" > "$f.tmp" && mv "$f.tmp" "$f"; done
-# one select option per GPU count, in place of the GPU_OPTIONS marker line
-opts=$(for n in $(seq 1 "$GPU_MAX"); do printf '      - ["GPU node: %d x %s", "gpu%d"]\n' "$n" "$GPU_TYPE" "$n"; done)
-python3 -c 'import sys; p, o = sys.argv[1], sys.argv[2]; s = open(p).read(); open(p, "w").write("".join(o + "\n" if "GPU_OPTIONS" in l else l for l in s.splitlines(True)) if o else "".join(l for l in s.splitlines(True) if "GPU_OPTIONS" not in l))' "$APP/form.yml" "$opts"
-chmod +x "$APP/template/script.sh.erb"          # OOD runs it as the job script
+rm -rf "$APP/__pycache__"
+export CODE_SERVER_ROOT VSCODE_IDLE_SECONDS
+envsubst '$CODE_SERVER_ROOT $VSCODE_IDLE_SECONDS' < "$HERE/ood-app/vscode/job.sh" > "$APP/job.sh"
+python3 -c 'import json,sys; a=sys.argv; json.dump({"slurm_bin": a[2], "slurm_conf": a[11], "viewer_partition": a[3], "mem": a[4],
+  "idle_seconds": int(a[5]), "gpu_partition": a[6], "gpu_type": a[7], "gpu_max": int(a[8]) if a[6] else 0,
+  "cpus_per_gpu": int(a[9]), "mem_per_gpu_mb": int(a[10])}, open(a[1], "w"), indent=1)' \
+  "$APP/site.json" "$SLURM_BIN" "$VIEWER_PARTITION" "$VSCODE_MEM" "$VSCODE_IDLE_SECONDS" \
+  "$GPU_PARTITION" "$GPU_TYPE" "$GPU_MAX" "$CPUS_PER_GPU" "$MEM_PER_GPU_MB" "$SLURM_CONF"
 chmod -R a+rX "$APP"
+chmod a+rx "$APP/job.sh"                        # sbatch runs it as the user
+touch "$APP/passenger_wsgi.py"                  # reload it in running web servers
 
 echo "== 4. Check"
-grep -rn '\${\(CLUSTER_ID\|CODE_SERVER_ROOT\|GPU_\|CPUS_PER\|MEM_PER\|VIEWER_\|VSCODE_\)' "$APP" && { echo "unfilled values above" >&2; exit 1; }
-grep '^cluster:' "$APP/form.yml"
-[ -f "/etc/ood/config/clusters.d/$CLUSTER_ID.yml" ] || echo "WARNING: no clusters.d/$CLUSTER_ID.yml, the app won't show up"
-echo "Done. In OOD: Restart Web Server, then Interactive Apps -> VS Code -> Launch."
+grep -n '\${\(CODE_SERVER_ROOT\|VSCODE_\)' "$APP/job.sh" && { echo "unfilled values above" >&2; exit 1; }
+bash -n "$APP/job.sh" && echo "job.sh: OK"
+python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$APP/passenger_wsgi.py" && echo "passenger_wsgi.py: OK"
+cat "$APP/site.json"; echo
+[ -d /var/www/ood/apps/sys/model_hub ] || echo "WARNING: no Model Hub app: the page borrows its look (Bootstrap, style.css) from it"
+echo "Done. In OOD: Restart Web Server, then Interactive Apps -> VS Code."
