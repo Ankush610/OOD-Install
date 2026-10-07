@@ -1,0 +1,93 @@
+# The Model Hub gateway (8-gateway.sh fills ${...} with envsubst, explicit list). One pod, two containers:
+#   nginx  HTTPS on 8443 -> Service port 443 on GATEWAY_IP (MetalLB); forwards /<owner>/<endpoint>/... to the model
+#   auth   auth.py on 127.0.0.1:8081 (pod-local): checks the caller's key and may-they-call-it for every request
+# Not Slurm-managed (no aistack/slurm-bridge label): always on, pinned to master like MLflow.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${GATEWAY_NS}
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: gateway, namespace: ${GATEWAY_NS} }
+automountServiceAccountToken: true
+---
+# What the gateway may read. Bound per user namespace by 2-sync-users.sh (onboarding/user-ns.yaml), so it can read
+# key hashes, endpoint Services and vLLM keys in u-<user> only, never in system namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: model-hub-gateway }
+rules:
+- apiGroups: [""]
+  resources: [services, secrets]
+  verbs: [get]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: gateway, namespace: ${GATEWAY_NS} }
+data:
+  nginx.conf: |
+${NGINX_CONF}
+  auth.py: |
+${AUTH_PY}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: gateway, namespace: ${GATEWAY_NS} }
+spec:
+  replicas: 1                                   # an hour of downtime is acceptable (v2 decision); k8s restarts it
+  selector: { matchLabels: { app: gateway } }
+  template:
+    metadata:
+      labels: { app: gateway }
+      annotations: { model-hub/config: "${CONFIG_SHA}" }   # changed config -> new pod
+    spec:
+      serviceAccountName: gateway
+      nodeSelector: { kubernetes.io/hostname: ${MASTER_HOST} }
+      tolerations:
+      - { key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }
+      - { key: slinky.slurm.net/managed-node, operator: Exists, effect: NoExecute }
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101                          # nginx-unprivileged's user; auth.py needs no particular one
+        runAsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+      - name: nginx
+        image: ${GATEWAY_NGINX_IMAGE}
+        ports: [{ name: https, containerPort: 8443 }]
+        securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+        volumeMounts:
+        - { name: config, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf, readOnly: true }
+        - { name: tls, mountPath: /tls, readOnly: true }
+        - { name: tmp, mountPath: /tmp }
+        resources: { requests: { cpu: 100m, memory: 64Mi }, limits: { cpu: "2", memory: 512Mi } }
+        readinessProbe: { httpGet: { path: /healthz, port: 8443, scheme: HTTPS }, periodSeconds: 10 }
+        livenessProbe:  { httpGet: { path: /healthz, port: 8443, scheme: HTTPS }, periodSeconds: 30 }
+      - name: auth
+        image: ${GATEWAY_PY_IMAGE}
+        command: [python3, -u, /app/auth.py]
+        env: [{ name: PORT, value: "8081" }, { name: CACHE_SECONDS, value: "60" }]
+        securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+        volumeMounts: [{ name: config, mountPath: /app/auth.py, subPath: auth.py, readOnly: true }]
+        resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: "1", memory: 256Mi } }
+        livenessProbe:
+          exec: { command: [python3, -c, "import urllib.request as u; u.urlopen('http://127.0.0.1:8081/healthz', timeout=3)"] }
+          periodSeconds: 30
+      volumes:
+      - { name: config, configMap: { name: gateway } }
+      - { name: tls, secret: { secretName: ${TLS_SECRET} } }
+      - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: ${GATEWAY_NS}
+  annotations: { metallb.io/loadBalancerIPs: "${GATEWAY_IP}" }
+spec:
+  type: LoadBalancer
+  selector: { app: gateway }
+  ports: [{ name: https, port: 443, targetPort: 8443 }]

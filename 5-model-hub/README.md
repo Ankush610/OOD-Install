@@ -15,6 +15,7 @@ bash 4-images.sh              # no root: build + push the serving images, mirror
 bash 5-test-serving.sh        # no root: models trained in the ML SIF load + answer in mlflow-serve-ml (local podman)
 sudo bash 6-test-endpoints.sh <user> [ml] [llm] [torch] [--keep]   # real endpoints in u-<user>, acting as the user
 sudo bash 7-install-ood-app.sh                # the OOD app (Interactive Apps -> Model Hub), then Restart Web Server
+sudo bash 8-gateway.sh        # the gateway on GATEWAY_URL; then rerun 2-sync-users.sh (its read rights) and 7-install-ood-app.sh
 ```
 
 **Once, by hand (the admin, not scripted):** slurm-bridge manages namespaces by label instead of a fixed list, so
@@ -41,6 +42,25 @@ A30 is reserved in Slurm, but the pod's DRA ResourceClaim is never allocated, so
 | RoleBinding `edit` | `u-<user>` only | deploy, logs, delete in their own namespace; nothing elsewhere; can't relabel it |
 | ResourceQuota `gpus` | the user's GPU limit (`USER_GPU_QUOTA`, or their exception) for `nvidia.com/gpu` and each typed GPU class, 0 for the operator's catch-all classes; annotation `model-hub/max-hours` | a direct ResourceClaim can't get around the limit; the app reads the limits from here |
 | namespace labels `aistack/gpus`, `aistack/max-hours`, `aistack/custom-limits` | from `site.conf`, or the admin's exception (`--gpus`, `--max-hours`; `--reset`) | `pod-has-time-limit` rejects any pod over `max-hours` (or with no time limit, or asking for the whole node) |
+
+## Gateway (calling endpoints from anywhere)
+
+```
+laptop / notebook ──HTTPS + personal key──► GATEWAY_URL/<owner>/<endpoint>/<path> ──► <endpoint>.u-<owner>.svc:8080/<path>
+```
+| Piece | Where | Why |
+|---|---|---|
+| nginx + `gateway/auth.py`, one pod | namespace `GATEWAY_NS`, pinned to master, Service `LoadBalancer` on `GATEWAY_IP:443` (MetalLB) | one address for every model type (ML/DL `/invocations`, vLLM `/v1/...` streaming) |
+| personal key `mh~<user>~<48 hex>` | made in Model Hub (**API key**); only its SHA-256 is stored, Secret `model-hub-key` in `u-<user>` | shown once; new key = old one dead within a minute (auth.py caches 60 s) |
+| who may call | the endpoint's owner (sharing: next step) | unknown endpoint and "not yours" both 403 |
+| vLLM's own key | added by the gateway, never seen by the caller | users only ever handle their personal key |
+| certificate | `gateway/tls.yaml`: a self-signed Rudra CA (cert-manager) for `GATEWAY_IP`/`GATEWAY_HOST`; or the customer's (`GATEWAY_TLS_SECRET`) | users download `gateway-ca.crt` from the API key page |
+| read rights | ClusterRole `model-hub-gateway` (get services, secrets), bound **per user namespace** (`onboarding/user-ns.yaml`) | the gateway can't read system namespaces |
+
+Hardening that's tested (see the v2 build log): the key check uses the path nginx actually routes to (a raw
+`/me/mine/../../bob/his` is checked as `bob/his`), and only Services shaped like `render.py`'s are followed (no
+ExternalName or selector-less Service pointing elsewhere). **Not yet:** a network lock (any pod can still reach an
+endpoint's ClusterIP directly; build-plan step 1).
 
 ## Limits (GPUs at once, longest run)
 
@@ -88,6 +108,12 @@ rerun `2-sync-users.sh`. Exceptions survive. Running endpoints keep the time the
 | deploy / pod: `time limit N min is over your maximum of H hours` | asked for more than the user's `max-hours` | pick fewer hours, or the admin: `2-sync-users.sh <user> --max-hours H` |
 | pod: `this namespace has no aistack/max-hours label` | `1-setup.sh` added the policy but `2-sync-users.sh` hasn't run since | `sudo bash 2-sync-users.sh` |
 | deploy: `exceeded quota: gpus` | the user's GPUs are all in use (another endpoint) | stop one, or the admin: `--gpus 2` |
+| gateway: `{"error":"unknown or revoked API key"}` (401) | wrong/old key, or a new key less than a minute old | copy the key again (API key page); wait a minute after making one |
+| gateway: `{"error":"no such endpoint, or it isn't yours"}` (403) | wrong owner/endpoint in the URL, a deleted endpoint, or someone else's | use the URL from the endpoint's API tab |
+| gateway: 403 for every call right after installing it | `2-sync-users.sh` hasn't run since `8-gateway.sh` (no read rights in user namespaces) | `sudo bash 2-sync-users.sh` |
+| gateway: 502 / 504 | the endpoint is stopped, still loading, or waiting for a GPU | check its state in Model Hub |
+| `curl: (60) SSL certificate problem` | the self-signed Rudra CA isn't trusted | `curl --cacert gateway-ca.crt` (download on the API key page) |
+| `8-gateway.sh`: `GATEWAY_IP ... is already used` | another LoadBalancer has that IP | pick a free one from the MetalLB pool in `site.conf` |
 | `2-sync-users.sh`: `Run 1-setup.sh first` | no UID policy yet; a user namespace without it would let pods claim any UID | run `1-setup.sh` |
 | test pod stays `Pending`, no Slurm job | namespace not labelled `aistack/slurm-bridge=true`, or slurm-bridge still on its list config | `kubectl -n slurm get cm slurm-bridge-config -o yaml` must show `managedNamespaceSelector` |
 | user's `kubectl`: `Unauthorized` | certificate expired or cluster CA changed | rerun `2-sync-users.sh <user>` |

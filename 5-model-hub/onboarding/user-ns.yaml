@@ -28,6 +28,14 @@ metadata: { name: owner, namespace: u-${USER_NAME} }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: edit }
 subjects: [{ apiGroup: rbac.authorization.k8s.io, kind: User, name: "${USER_NAME}" }]
 ---
+# The Model Hub gateway (8-gateway.sh) may read this namespace's endpoint Services, the user's API-key hash
+# (Secret model-hub-key) and vLLM keys: it checks callers here. Read only, and only in user namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: model-hub-gateway, namespace: u-${USER_NAME} }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: model-hub-gateway }
+subjects: [{ kind: ServiceAccount, name: gateway, namespace: "${GATEWAY_NS}" }]
+---
 # PVs are cluster-wide and bind to exactly one PVC (claimRef), so each user gets their own pair even for the
 # shared MODELS_ROOT. Pods run as the user, so NFS only shows them what the user may read anyway.
 apiVersion: v1

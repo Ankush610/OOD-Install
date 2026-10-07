@@ -19,6 +19,14 @@ rm -rf "$APP"
 cp -r "$HERE/ood-app/model_hub" "$APP"
 cp "$HERE/render.py" "$APP/"
 rm -rf "$APP/__pycache__"
+# the gateway's self-signed CA (8-gateway.sh), so users can download it from My API key; none with a customer cert
+ca=no
+if [ -z "$GATEWAY_TLS_SECRET" ] && KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n "$GATEWAY_NS" get secret rudra-ca \
+     -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 -d > "$APP/public/gateway-ca.crt" && [ -s "$APP/public/gateway-ca.crt" ]; then
+  ca=yes
+else
+  rm -f "$APP/public/gateway-ca.crt"
+fi
 
 echo "== 2. site.json"
 gpu_types=$(sinfo -h -p "$BRIDGE_PARTITION" -o %G | grep -oE 'gpu:[^:(,]+:[0-9]+' | cut -d: -f2 | sort -u | paste -sd,)
@@ -38,6 +46,7 @@ json.dump({
     "partition": "$BRIDGE_PARTITION",
     "hours_default": $ENDPOINT_HOURS_DEFAULT, "hours_max": $ENDPOINT_HOURS_MAX,   # per-user limits: their quota
     "slurm_bin": "$SLURM_BIN",
+    "gateway": {"url": "$GATEWAY_URL", "ca": "$ca" == "yes"},
     "models_root": "$MODELS_ROOT",
     "ssh": {"login": "$MASTER_HOST", "jump": "$SSH_JUMP"},
 }, open(sys.argv[1], "w"), indent=1)

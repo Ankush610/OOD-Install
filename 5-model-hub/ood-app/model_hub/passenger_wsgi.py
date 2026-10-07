@@ -9,13 +9,16 @@ Standard library + PyYAML only (system python3). render.py (next to this file) b
 site.json (written by 7-install-ood-app.sh from site.conf) holds the site values.
 """
 import base64
+import hashlib
 import json
 import mimetypes
 import os
 import pwd
 import re
+import secrets
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -339,6 +342,26 @@ def predict(name, body):
         raise Fail(502, f"endpoint not reachable: {e}")
 
 
+# ---------- personal API key (the gateway checks it; one per person) ----------
+def key_info():
+    s = kubectl("get", "secret", "model-hub-key", "--ignore-not-found", "-o", "json").strip()
+    if not s:
+        return {"exists": False}
+    return {"exists": True, "created": json.loads(s)["metadata"].get("annotations", {}).get("model-hub/created")}
+
+
+def new_key():
+    """A new key replaces the old one at once (the gateway sees it within a minute). Only its SHA-256 is stored, in
+    the user's own namespace; the key itself is shown once and never kept anywhere."""
+    key = f"mh~{USER}~{secrets.token_hex(24)}"
+    created = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    secret = {"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+              "metadata": {"name": "model-hub-key", "namespace": NS, "annotations": {"model-hub/created": created}},
+              "stringData": {"sha256": hashlib.sha256(key.encode()).hexdigest()}}
+    kubectl("apply", "-f", "-", stdin=json.dumps(secret))
+    return {"key": key, "created": created}
+
+
 # ---------- routing ----------
 def route(method, path, body):
     parts = [urllib.parse.unquote(p) for p in path.strip("/").split("/")]
@@ -349,7 +372,15 @@ def route(method, path, body):
         return {"user": USER, "namespace": NS, "mlflow": os.path.isfile(CREDS), "kube": os.path.isfile(KUBECONFIG),
                 "gpu_types": SITE["gpu_types"], "limits": limits(),
                 "mlflow_ui": SITE["mlflow_ui"], "models_root": SITE["models_root"],
-                "ssh": SITE.get("ssh", {})}
+                "ssh": SITE.get("ssh", {}), "gateway": SITE.get("gateway", {})}
+    if a == ["key"]:
+        if method == "GET":
+            return key_info()
+        if method == "POST":
+            return new_key()
+        if method == "DELETE":
+            kubectl("delete", "secret", "model-hub-key", "--ignore-not-found")
+            return {"exists": False}
     if method == "GET" and a == ["models"]:
         return list_models()
     if method == "GET" and len(a) == 3 and a[0] == "models":

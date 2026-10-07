@@ -1,0 +1,35 @@
+# The gateway's certificate when the customer gives none (GATEWAY_TLS_SECRET=""): a Rudra CA made on this rack
+# (cert-manager, already installed), and the gateway certificate signed by it for GATEWAY_IP (+ GATEWAY_HOST).
+# Users trust it once: Model Hub -> My API key -> download ca.crt (or curl --cacert ca.crt). cert-manager renews it.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: { name: selfsigned, namespace: ${GATEWAY_NS} }
+spec: { selfSigned: {} }
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: rudra-ca, namespace: ${GATEWAY_NS} }
+spec:
+  isCA: true
+  commonName: "${CLUSTER_TITLE} Model Hub CA"
+  secretName: rudra-ca
+  duration: 87600h                              # 10 years: users install it once
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { name: selfsigned, kind: Issuer }
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: { name: rudra-ca, namespace: ${GATEWAY_NS} }
+spec: { ca: { secretName: rudra-ca } }
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: gateway-tls, namespace: ${GATEWAY_NS} }
+spec:
+  secretName: gateway-tls
+  duration: 8760h                               # 1 year, renewed 30 days before (nginx re-reads it on pod restart)
+  renewBefore: 720h
+  privateKey: { algorithm: ECDSA, size: 256 }
+  commonName: "${GATEWAY_NAME}"
+${CERT_SANS}
+  issuerRef: { name: rudra-ca, kind: Issuer }

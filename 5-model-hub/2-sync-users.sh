@@ -106,8 +106,8 @@ for u in "${users[@]}"; do
   [ -z "$set_hours" ] || { hours=$set_hours; custom=true; }
   echo "        limits: $gpus GPU(s), max $hours h$([ "$custom" = true ] && echo ' (exception)')"
   export USER_NAME=$u USER_UID=$uid USER_GID=$gid USER_HOME=$home NFS_SERVER MODELS_ROOT \
-         USER_GPUS=$gpus USER_MAX_HOURS=$hours USER_CUSTOM=$custom
-  envsubst '$USER_NAME $USER_UID $USER_GID $USER_HOME $NFS_SERVER $MODELS_ROOT $USER_GPUS $USER_MAX_HOURS $USER_CUSTOM' \
+         USER_GPUS=$gpus USER_MAX_HOURS=$hours USER_CUSTOM=$custom GATEWAY_NS
+  envsubst '$USER_NAME $USER_UID $USER_GID $USER_HOME $NFS_SERVER $MODELS_ROOT $USER_GPUS $USER_MAX_HOURS $USER_CUSTOM $GATEWAY_NS' \
     < "$HERE/onboarding/user-ns.yaml" | kubectl apply -f - | sed 's/^/        /'
   # the quota is the hard GPU limit; its annotation tells the Model Hub app the run-time limit (users can read
   # their quota but not change it, nor their namespace's labels)

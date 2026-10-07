@@ -1,7 +1,7 @@
 // Model Hub UI (Bootstrap 5.3). Talks only to this app's backend (passenger_wsgi.py, running as the logged-in user):
 //   GET api/me | api/models | api/models/<name>/<version> | api/endpoints | api/endpoints/<n>/logs | /key
 //   POST api/deploy | api/endpoints/<n>/predict      DELETE api/endpoints/<n>
-// Routes: #/  #/model/<name>[/<version>]  #/endpoints  #/endpoint/<name>  #/help
+// Routes: #/  #/model/<name>[/<version>]  #/endpoints  #/endpoint/<name>  #/key  #/help
 'use strict';
 const $ = s => document.querySelector(s);
 const app = $('#app');
@@ -424,7 +424,7 @@ function playground(ep, info) {
 }
 
 // Everything an app (Flask, FastAPI, Streamlit, Gradio, a notebook, a script…) needs to call this endpoint, + one curl.
-// On the cluster: the ClusterIP. From your own machine (v1, no gateway yet): an ssh tunnel to that same address.
+// From anywhere: the gateway + the user's personal key. Inside the cluster also: the endpoint's ClusterIP.
 function apiTab(ep, info) {
   const llm = ep.runtime === 'vllm', ip = ep.ip || '<cluster-ip>';
   const base = `http://${ip}:8080`, url = base + ep.path;
@@ -438,13 +438,34 @@ function apiTab(ep, info) {
       <button class="btn btn-sm btn-link p-0" data-copy="${id}" aria-label="Copy"><i class="bi bi-clipboard"></i></button></span>`;
   const table = rows => `<table class="table table-sm align-middle small mb-3"><tbody>${rows.filter(Boolean).join('')}</tbody></table>`;
   const curl = `curl ${url} \\\n  -H 'Content-Type: application/json' \\\n${llm ? '  -H "Authorization: Bearer $KEY" \\\n' : ''}  -d ${big ? '@input.json' : `'${body}'`}`;
-  const { login = '<login-node>', jump = '' } = ME.ssh || {};
-  const tunnel = `ssh ${jump ? `-J ${jump.includes('@') ? jump : ME.user + '@' + jump} ` : ''}-L 8080:${ip}:8080 ${ME.user}@${login}`;
+  const gw = ME.gateway?.url, gbase = `${gw}/${ME.user}/${ep.name}`, gurl = gbase + ep.path;
+  const ca = ME.gateway?.ca ? '--cacert gateway-ca.crt ' : '';
+  const gcurl = `curl ${ca}${gurl} \\\n  -H "Authorization: Bearer $MH_KEY" \\\n  -H 'Content-Type: application/json' \\\n  -d ${big ? '@input.json' : `'${body}'`}`;
+  const gpy = llm ? `from openai import OpenAI          # pip install openai
+import os
+client = OpenAI(base_url="${gbase}/v1", api_key=os.environ["MH_KEY"]${ME.gateway?.ca ? ',\n                http_client=__import__("httpx").Client(verify="gateway-ca.crt")' : ''})
+r = client.chat.completions.create(model="${ep.name}", messages=[{"role": "user", "content": "Hello"}])
+print(r.choices[0].message.content)`
+    : `import os, requests                 # pip install requests
+r = requests.post("${gurl}", json=${big ? 'json.load(open("input.json"))' : body},
+                  headers={"Authorization": "Bearer " + os.environ["MH_KEY"]}${ME.gateway?.ca ? ', verify="gateway-ca.crt"' : ''})
+print(r.json())`;
   $('#tab').innerHTML = `<div class="card border-0 shadow-sm"><div class="card-body">
       <p class="text-body-secondary small">A plain HTTP JSON API: use it from any app or tool (Flask, FastAPI, Streamlit, Gradio, a notebook, a script).</p>
+      ${gw ? `<h2 class="h6"><i class="bi bi-globe2 me-1"></i>From anywhere: your laptop or the cluster</h2>
+      <p class="small text-body-secondary mb-2">Through the gateway, with your personal API key (<a href="#/key">My API key</a>).
+        Put it in an environment variable: <code>export MH_KEY=mh~…</code>. Only you can call your endpoints.</p>
+      ${table([
+        row('URL', copyable('g-url', gurl)),
+        llm && row('Base URL', `${copyable('g-base', gbase + '/v1')} <span class="text-body-secondary">for OpenAI client libraries (api_key = your key, model = <code>${h(ep.name)}</code>)</span>`),
+        row('Header', '<code>Authorization: Bearer $MH_KEY</code>'),
+        ME.gateway?.ca && row('Certificate', 'Self-signed: download <a href="gateway-ca.crt" download><i class="bi bi-download me-1"></i>gateway-ca.crt</a> once and pass it as shown (or your browser/OS can trust it).'),
+      ])}
+      ${codeBlock('g-curl', gcurl, 'Example (curl)')}
+      ${codeBlock('g-py', gpy, 'Example (Python)')}` : ''}
 
-      <h2 class="h6"><i class="bi bi-hdd-network me-1"></i>Accessing on cluster</h2>
-      <p class="small text-body-secondary mb-2">From jobs, VS Code sessions and apps running on the cluster.</p>
+      <h2 class="h6 mt-4"><i class="bi bi-hdd-network me-1"></i>Directly, inside the cluster</h2>
+      <p class="small text-body-secondary mb-2">Jobs, VS Code sessions and apps on the cluster can also call the endpoint's own address (changes when it is redeployed).</p>
       ${table([
         row('URL', copyable('a-url', url)),
         llm && row('Base URL', `${copyable('a-base', base + '/v1')} <span class="text-body-secondary">for OpenAI client libraries</span>`),
@@ -464,14 +485,7 @@ function apiTab(ep, info) {
             : '<code>{"predictions": [...]}</code>, one entry per input'),
         row('Health check', `<code>GET ${h(base)}${llm ? '/health' : '/ping'}</code>: 200 when ready`),
       ])}
-      ${codeBlock('c-curl', curl, 'Example (curl)')}
-
-      <h2 class="h6 mt-4"><i class="bi bi-laptop me-1"></i>On your local machine</h2>
-      ${table([
-        row('Tunnel', `${copyable('a-tun', tunnel)}<div class="text-body-secondary mt-1">Run it on your machine and keep it open.</div>`),
-        row('Then use', `<code>http://localhost:8080</code> in place of <code>${h(base)}</code>; everything else is as above.`),
-        row('Note', 'The address changes if the endpoint is deleted and deployed again: copy this command again then.'),
-      ])}</div></div>`;
+      ${codeBlock('c-curl', curl, 'Example (curl)')}</div></div>`;
   wireCopies();
   if (big) $('#dl').onclick = e => {
     e.preventDefault();
@@ -523,8 +537,8 @@ with mlflow.start_run():
           common cases: <b>JSON</b> always, a <b>form</b> for table models, <b>image</b> upload/draw for image tensors, <b>chat</b> for LLMs.
           For anything else write your own app in any tool (Flask, FastAPI, Streamlit, Gradio…):</p>
         <ol class="small mb-0"><li>Open your endpoint → <b>API</b> tab: URL, headers, request/response format and a curl example.</li>
-          <li>Your app can run <b>on the cluster</b> (VS Code app's terminal, or ssh) and call the endpoint's address, or
-            <b>on your computer</b> through the ssh tunnel shown in the API tab (<code>http://localhost:8080</code>).</li>
+          <li>Your app can run <b>anywhere</b>, your computer or the cluster: it calls the gateway address from the API tab
+            with your personal key (<a href="#/key">My API key</a>).</li>
           <li>An app on the cluster opens in this browser through OOD: <code>${h(location.origin)}/rnode/&lt;host&gt;/&lt;port&gt;/</code>, listening on
             <code>0.0.0.0:&lt;port&gt;</code> with its base path set to <code>/rnode/&lt;host&gt;/&lt;port&gt;</code>. Give it a password:
             every OOD user can open any <code>/rnode</code> address.</li></ol>`)}
@@ -537,10 +551,52 @@ with mlflow.start_run():
 }
 
 // ---------- routing ----------
+async function renderKey() {
+  app.innerHTML = header('My API key', 'One key for all your endpoints, from anywhere.') + spinner();
+  let k; try { k = await api('key'); } catch (e) { app.innerHTML = header('My API key') + alertBox(e); return; }
+  const gw = ME.gateway?.url;
+  app.innerHTML = header('My API key', 'One key for all your endpoints, from anywhere.') + `
+    <div class="row g-4"><div class="col-lg-7"><div class="card border-0 shadow-sm"><div class="card-body">
+      <p>${k.exists ? `<i class="bi bi-key-fill text-success me-1"></i>You have a key, made ${h(new Date(k.created).toLocaleString())}.`
+                    : '<i class="bi bi-key me-1"></i>You have no key yet.'}</p>
+      <div id="newkey"></div>
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary" id="mk"><i class="bi bi-plus-lg me-1"></i>${k.exists ? 'Make a new key' : 'Make my key'}</button>
+        ${k.exists ? '<button class="btn btn-outline-danger" id="rv"><i class="bi bi-x-lg me-1"></i>Revoke</button>' : ''}</div>
+      <p class="small text-body-secondary mt-3 mb-0">The key is shown <b>once</b>; only a fingerprint of it is stored. A new key replaces the
+        old one, and revoking stops it; both take effect within a minute. Treat it like a password: keep it in an
+        environment variable (<code>export MH_KEY=…</code>), never in code or git.</p>
+    </div></div></div>
+    <div class="col-lg-5"><div class="card border-0 shadow-sm"><div class="card-body small">
+      <h2 class="h6">Using it</h2>
+      <p>Gateway: <code>${h(gw || 'not installed yet')}</code></p>
+      <p>Call <code>${h(gw || '')}/${h(ME.user)}/&lt;endpoint&gt;/…</code> with the header <code>Authorization: Bearer $MH_KEY</code>.
+        Each endpoint's <b>API</b> tab has ready-made examples.</p>
+      ${ME.gateway?.ca ? `<p class="mb-0">The gateway uses a self-signed certificate. Download it once:
+        <a href="gateway-ca.crt" download><i class="bi bi-download me-1"></i>gateway-ca.crt</a>, then <code>curl --cacert gateway-ca.crt …</code></p>` : ''}
+    </div></div></div></div>`;
+  $('#mk').onclick = async () => {
+    if (k.exists && !confirm('Make a new key? The old one stops working within a minute.')) return;
+    try {
+      const r = await api('key', { method: 'POST' });
+      $('#newkey').innerHTML = `<div class="alert alert-success"><b>Your new key</b>, copy it now: it won't be shown again.
+        <div class="input-group input-group-sm mt-2"><input class="form-control font-monospace" id="kv" readonly value="${h(r.key)}">
+        <button class="btn btn-outline-secondary" id="kc"><i class="bi bi-clipboard me-1"></i>Copy</button></div>
+        <div class="mt-2"><code>export MH_KEY='${h(r.key)}'</code></div></div>`;
+      $('#kc').onclick = () => copy(r.key);
+      $('#mk').innerHTML = '<i class="bi bi-plus-lg me-1"></i>Make a new key'; k.exists = true;
+    } catch (e) { $('#newkey').innerHTML = alertBox(e); }
+  };
+  if (k.exists) $('#rv').onclick = async () => {
+    if (!confirm('Revoke your key? Scripts using it stop working within a minute.')) return;
+    try { await api('key', { method: 'DELETE' }); toast('Key revoked'); renderKey(); } catch (e) { toast(e.message); }
+  };
+}
+
 async function route() {
   clearTimeout(timer);
   const [page, a, b] = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
-  const nav = { endpoints: 'endpoints', endpoint: 'endpoints', help: 'help' }[page] || 'models';
+  const nav = { endpoints: 'endpoints', endpoint: 'endpoints', key: 'key', help: 'help' }[page] || 'models';
   document.querySelectorAll('[data-nav]').forEach(x => {
     x.classList.toggle('active', x.dataset.nav === nav);
     x.toggleAttribute('aria-current', x.dataset.nav === nav);
@@ -560,6 +616,7 @@ async function route() {
   if (page === 'endpoints') return renderEndpoints();
   if (page === 'endpoint' && a) return renderEndpoint(a);
   if (page === 'help') return renderHelp();
+  if (page === 'key') return renderKey();
   return renderModels();
 }
 window.addEventListener('hashchange', () => { app.innerHTML = ''; route(); });
