@@ -36,7 +36,9 @@ const stateBadge = s => `<span class="badge rounded-pill text-bg-${STATE[s] || '
 const when = ms => ms ? new Date(ms).toLocaleString() : '';
 const bytes = n => { if (!n) return ''; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return `${n.toFixed(i ? 1 : 0)} ${u[i]}`; };
 const num = v => typeof v !== 'number' ? h(v) : Math.abs(v) >= 1e4 || Number.isInteger(v) ? v.toLocaleString() : +v.toPrecision(4);
-const mlflowUI = () => `${location.protocol}//${location.hostname}:${ME.mlflow_ui.port}${ME.mlflow_ui.prefix}/`;
+// sso (Keycloak): through OOD's /node proxy, already logged in; else straight to MLflow's port (asks for a password)
+const mlflowUI = () => ME.mlflow_ui.sso ? `${location.origin}${ME.mlflow_ui.prefix}/`
+  : `${location.protocol}//${location.hostname}:${ME.mlflow_ui.port}${ME.mlflow_ui.prefix}/`;
 // "float32 [-1,1,28,28]" or "3 columns: age, usage, plan" -- one line instead of the full schema (that's in the API tab)
 const sigLine = cols => !cols?.length ? null : cols[0]['tensor-spec'] && cols.length === 1
   ? `${h(cols[0]['tensor-spec'].dtype)} tensor <code>${h(JSON.stringify(cols[0]['tensor-spec'].shape))}</code>`

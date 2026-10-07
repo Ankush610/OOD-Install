@@ -40,9 +40,11 @@ export MLFLOW_TRACKING_URI=<MLFLOW_URI>      # shown, with Copy, on the OOD page
 python train.py
 ```
 
-**Web UI:** **Open MLflow** on the OOD page goes **directly** to port `MLFLOW_PORT`, and MLflow asks for your cluster username and password. It can't go through OOD's `/node` proxy: OOD strips the `Authorization` header (it forwards only `X-Forwarded-User`), so MLflow would always answer 401. From a laptop, the SSH tunnel needs `-L <MLFLOW_PORT>:<MASTER_IP>:<MLFLOW_PORT>`. The different port also keeps this browser login separate from the OOD one.
+**Web UI, with Keycloak (`OOD_AUTH=keycloak`):** **Open MLflow** opens it **through OOD** (`https://<OOD>/node/<MASTER_IP>/<MLFLOW_PORT>/`), already logged in: no second password. OOD's `/node` proxy sends the logged-in user as `X-Forwarded-User`; Apache adds `X-MLflow-Proxy-Secret` on that one path, and `image/ldap_auth.py` trusts the user **only** when the secret matches (`MLFLOW_DATA/proxy.secret`, made by `2-deploy.sh`, read by `../2-ood/setup-ood.sh`). Calling the port directly with a made-up `X-Forwarded-User` gets 401.
 
-Don't make MLflow trust `X-Forwarded-User` to avoid the second port: anyone who can reach the port could fake that header.
+**Web UI, without Keycloak (`OOD_AUTH=ldap`):** **Open MLflow** goes **directly** to port `MLFLOW_PORT`, and MLflow asks for your cluster username and password (OOD's `/node` proxy doesn't pass the password on). From a laptop, the SSH tunnel needs `-L <MLFLOW_PORT>:<MASTER_IP>:<MLFLOW_PORT>`.
+
+Jobs and scripts are the same either way: the token in `~/.mlflow/credentials` on `MLFLOW_URI`.
 
 **Why `MLFLOW_PREFIX`:** MLflow serves under that URL path (`MLFLOW_STATIC_PREFIX`), and the tracking URI includes it. This cluster keeps `/node/<ip>/<port>` so the URI matches its earlier setup. On a new cluster, `""` gives a plain `http://<ip>:<port>`.
 
@@ -59,6 +61,8 @@ Don't make MLflow trust `X-Forwarded-User` to avoid the second port: anyone who 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `1-build-image.sh`: `THESE PACKAGES DO NOT MATCH THE HASHES` | PyPI dropped the connection mid-download | rerun |
+| Keycloak on, but **Open MLflow** still asks for a password | the OOD page was installed before the switch, or Apache has no MLflow secret yet | `sudo bash 2-deploy.sh`, `sudo bash ../2-ood/setup-ood.sh`, `sudo bash 4-install-ood-app.sh`, then Restart Web Server |
+| through OOD: MLflow answers 401 | `proxy.secret` changed after `setup-ood.sh` ran (Apache sends the old one), or the pod runs the old image | rerun `../2-ood/setup-ood.sh`; check the pod's image is `MLFLOW_IMAGE` (`-sso`) |
 | `2-deploy.sh`: `is not in the registry` | image not built/pushed, or another tag in `site.conf` | `bash 1-build-image.sh` |
 | `2-deploy.sh`: `UID <n> already belongs to '<x>'` | `MLFLOW_UID` is taken on master | pick a free UID below `MIN_UID` in `site.conf` |
 | `2-deploy.sh`: rollout timed out, event `failed calling webhook "pods.slinky.slurm.net" ... connection refused` | slurm-bridge's admission webhook is down, and it blocks new pods in every namespace except `kube-system`/`slurm` | its pods need a toleration for `slinky.slurm.net/managed-node`: `kubectl -n slurm patch deploy …` (lost on `helm upgrade`: put it in the chart values) |

@@ -78,6 +78,8 @@ spec:
         - name: MLFLOW_FLASK_SERVER_SECRET_KEY
           valueFrom:
             secretKeyRef: { name: mlflow, key: flask-secret-key }
+        - name: MLFLOW_PROXY_SECRET_FILE        # image/ldap_auth.py: OOD's Apache proves itself with this
+          value: /data/proxy.secret             # written by 2-deploy.sh, read by 2-ood/setup-ood.sh
         - name: LDAP_URI                        # image/ldap_auth.py
           value: ${LDAP_URI}:636
         - name: LDAP_BASE

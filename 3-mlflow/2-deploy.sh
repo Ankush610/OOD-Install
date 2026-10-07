@@ -43,7 +43,9 @@ admin_password = $ADMIN_PASS
 authorization_function = ldap_auth:authenticate_request
 EOF
 )
-chown "$MLFLOW_UID:$MLFLOW_UID" "$MLFLOW_DATA/admin.pass" "$MLFLOW_DATA/basic_auth.ini"
+# single sign-on: OOD's Apache sends this with the logged-in user (2-ood/setup-ood.sh, OOD_AUTH=keycloak)
+[ -s "$MLFLOW_DATA/proxy.secret" ] || (umask 077; openssl rand -hex 32 | tr -d '\n' > "$MLFLOW_DATA/proxy.secret")
+chown "$MLFLOW_UID:$MLFLOW_UID" "$MLFLOW_DATA/admin.pass" "$MLFLOW_DATA/basic_auth.ini" "$MLFLOW_DATA/proxy.secret"
 
 echo "== 4. Apply (namespace mlflow, pinned to $MASTER_HOST)"
 export MASTER_HOST MASTER_IP MLFLOW_IMAGE MLFLOW_PORT MLFLOW_PREFIX MLFLOW_DATA MLFLOW_UID LDAP_URI LDAP_BASE LDAP_CA
@@ -64,3 +66,6 @@ cat <<EOF
 Done. Tracking URI: $MLFLOW_URI
 Next: sudo bash 3-sync-tokens.sh
 EOF
+if [ "$OOD_AUTH" = keycloak ] && ! grep -q X-MLflow-Proxy-Secret /etc/ood/config/ood_portal.yml 2>/dev/null; then
+  echo "OOD_AUTH=keycloak: also rerun ../2-ood/setup-ood.sh, so the web UI opens through OOD without a second password."
+fi

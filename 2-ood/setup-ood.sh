@@ -104,6 +104,22 @@ oidc_settings:
   OIDCPKCEMethod: 'S256'
 logout_redirect: '/oidc?logout=https%3A%2F%2F${OOD_SERVERNAME}%2F'"
 fi
+# MLflow single sign-on (OOD_AUTH=keycloak): OOD's /node proxy already reaches MLflow at its prefix and sends the
+# logged-in user as X-Forwarded-User. MLflow trusts that only with this secret, which Apache adds on MLflow's
+# path alone (a <Location> merges with OOD's /node <LocationMatch>), so other /node apps never see it.
+mlflow_sso=""
+if [ "$OOD_AUTH" = keycloak ]; then
+  if [[ $MLFLOW_PREFIX != /node/* ]]; then
+    echo "MLflow SSO skipped: MLFLOW_PREFIX ($MLFLOW_PREFIX) is not under /node/, so OOD doesn't proxy MLflow."
+  elif [ -s "$MLFLOW_DATA/proxy.secret" ]; then
+    mlflow_sso="
+  - '<Location \"${MLFLOW_PREFIX}\">'
+  - '  RequestHeader set X-MLflow-Proxy-Secret \"$(cat "$MLFLOW_DATA/proxy.secret")\"'
+  - '</Location>'"
+  else
+    echo "MLflow SSO skipped: no $MLFLOW_DATA/proxy.secret yet. Run ../3-mlflow/2-deploy.sh, then rerun this script."
+  fi
+fi
 (umask 077; cat > "$PORTAL" <<EOF
 servername: ${OOD_SERVERNAME}
 port: 443
@@ -122,7 +138,7 @@ custom_vhost_directives:
   - '  ProxyPassReverse "http://127.0.0.1:${KEYCLOAK_PORT}${KEYCLOAK_PATH}"'
   - '  RequestHeader set X-Forwarded-Proto "https"'
   - '  RequestHeader set X-Forwarded-Port "443"'
-  - '</Location>'
+  - '</Location>'${mlflow_sso}
 EOF
 )
 chmod 600 "$PORTAL"                               # holds the OIDC client secret when OOD_AUTH=keycloak

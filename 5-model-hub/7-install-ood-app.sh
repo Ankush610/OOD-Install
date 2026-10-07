@@ -32,7 +32,7 @@ def libs(name, image):
 json.dump({
     "image_libs": {"ml": libs("mlflow-serve-ml", "$MLFLOW_SERVE_ML"), "torch": libs("mlflow-serve-torch", "$MLFLOW_SERVE_TORCH")},
     "mlflow_uri": "$MLFLOW_URI",
-    "mlflow_ui": {"port": $MLFLOW_PORT, "prefix": "$MLFLOW_PREFIX"},
+    "mlflow_ui": {"port": $MLFLOW_PORT, "prefix": "$MLFLOW_PREFIX", "sso": $([ "$OOD_AUTH" = keycloak ] && echo true || echo false)},
     "images": {"ml": "$MLFLOW_SERVE_ML", "torch": "$MLFLOW_SERVE_TORCH", "vllm": "$VLLM_OPENAI"},
     "gpu_types": [t for t in "$gpu_types".split(",") if t],
     "partition": "$BRIDGE_PARTITION",

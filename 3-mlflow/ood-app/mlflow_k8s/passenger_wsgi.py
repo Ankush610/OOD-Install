@@ -3,6 +3,7 @@ import html, json, os, pwd, urllib.request
 # site.json is written next to this file by ../../4-install-ood-app.sh, from ../../../site.conf
 SITE = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "site.json")))
 HOST, PORT, PREFIX = SITE["host"], SITE["port"], SITE["prefix"]
+SSO = SITE.get("sso", False)     # Keycloak: the UI opens through OOD (same login), not on the port
 URI = f"http://{HOST}:{PORT}{PREFIX}"
 CREDS = pwd.getpwuid(os.getuid()).pw_dir + "/.mlflow/credentials"
 
@@ -33,9 +34,10 @@ def application(environ, start_response):
 <p><small>Your jobs log in with a token from <code>~/.mlflow/credentials</code>, so no password goes into your
 scripts. In the MLflow web UI, use your normal cluster (SSH) password. The URI is fixed, it never changes.</small></p>
 <h4>MLflow web UI</h4>
-<p><small><b>Open MLflow</b> goes straight to MLflow on port {PORT}, not through OnDemand
-(OnDemand drops the password, so MLflow would always refuse). Log in with your cluster (SSH) username and password.
-If the button doesn't open, your network can't reach port {PORT} on {HOST}: ask the admin.</small></p>"""
+<p><small>{"<b>Open MLflow</b> opens it through OnDemand: you are already logged in." if SSO else
+f"<b>Open MLflow</b> goes straight to MLflow on port {PORT}, not through OnDemand (OnDemand drops the password, "
+f"so MLflow would always refuse). Log in with your cluster (SSH) username and password. If the button doesn't "
+f"open, your network can't reach port {PORT} on {HOST}: ask the admin."}</small></p>"""
     start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
     return [f"""<!doctype html><html><head><meta charset="utf-8"><title>MLflow (shared)</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -50,5 +52,5 @@ a.btn{{display:inline-block;color:#fff;text-decoration:none;padding:7px 16px;bor
 <div class="hd">MLflow (shared)</div><div class="bd">{body}</div>
 <div class="ft"><a class="btn" style="background:#6c757d" href="/pun/sys/dashboard">Dashboard</a>
 <a class="btn" style="background:#0d6efd" href="#" target="_blank"
-   onclick="this.href='http://'+location.hostname+':{PORT}{PREFIX}/'">Open MLflow</a></div>
+   onclick="this.href={"location.origin+'" + PREFIX + "/'" if SSO else "'http://'+location.hostname+':" + str(PORT) + PREFIX + "/'"}">Open MLflow</a></div>
 </div></body></html>""".encode()]

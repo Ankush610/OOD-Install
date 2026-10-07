@@ -14,8 +14,10 @@ echo "== 1. Copy app + its settings (site.json, from site.conf)"
 rm -rf "$APP"
 cp -r "$HERE/ood-app/mlflow_k8s" "$APP"
 rm -rf "$APP/__pycache__"
-python3 -c 'import json,sys; json.dump({"host": sys.argv[1], "port": int(sys.argv[2]), "prefix": sys.argv[3]}, open(sys.argv[4], "w"))' \
-  "$MASTER_IP" "$MLFLOW_PORT" "$MLFLOW_PREFIX" "$APP/site.json"
+# sso: with Keycloak (OOD_AUTH=keycloak) the UI opens through OOD's /node proxy, already logged in
+python3 -c 'import json,sys; json.dump({"host": sys.argv[1], "port": int(sys.argv[2]), "prefix": sys.argv[3],
+                                        "sso": sys.argv[5] == "keycloak"}, open(sys.argv[4], "w"))' \
+  "$MASTER_IP" "$MLFLOW_PORT" "$MLFLOW_PREFIX" "$APP/site.json" "$OOD_AUTH"
 chmod -R a+rX "$APP"
 touch "$APP/passenger_wsgi.py"                      # reload it in running web servers
 
