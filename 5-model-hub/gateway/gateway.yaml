@@ -24,6 +24,22 @@ rules:
   resources: [services, secrets]
   verbs: [get]
 ---
+# Teams: the gateway reads the caller's namespace annotation aistack/teams (namespaces are cluster-wide objects, so
+# this one is cluster-wide: get namespaces only, i.e. names, labels, annotations; nothing inside them).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: model-hub-gateway-teams }
+rules:
+- apiGroups: [""]
+  resources: [namespaces]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: model-hub-gateway-teams }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: model-hub-gateway-teams }
+subjects: [{ kind: ServiceAccount, name: gateway, namespace: "${GATEWAY_NS}" }]
+---
 apiVersion: v1
 kind: ConfigMap
 metadata: { name: gateway, namespace: ${GATEWAY_NS} }

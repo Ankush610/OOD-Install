@@ -20,6 +20,7 @@ sudo bash 1-server.sh                        # on master: 389 DS, the tree, acce
 sudo bash import-local-users.sh --dry-run    # optional, see below
 sudo bash 2-client.sh                        # on master, then as root on every compute node
 sudo bash add-user.sh <name>                 # on master: each new person
+sudo bash group.sh create nlp; sudo bash group.sh add nlp bob carol   # teams (Model Hub sharing); list / remove / delete
 ```
 
 `2-client.sh` runs on the compute nodes straight from this folder, because it's on the shared `/home`. It checks for UID clashes before it changes anything, then switches the node to SSSD (`authselect`), and checks with `getent -s sss`, which asks LDAP only.
@@ -37,6 +38,7 @@ sudo bash add-user.sh <name>                 # on master: each new person
 | `1-server.sh` | `dnf install 389-ds-base`, `dscreate` (self-signed TLS), `ou=People`/`ou=Groups`, access rules, CA -> `LDAP_CA` on the shared `/home` |
 | `2-client.sh` | UID clash check, `sssd.conf` (rfc2307, ldaps, CA pinned, `root:root 0600`), `authselect select sssd with-mkhomedir` |
 | `add-user.sh` | next free UID, user + own group, `ldappasswd -S`, home dir, subuid/subgid on login nodes, MLflow token |
+| `group.sh` | teams: `groupOfNames` under `ou=Groups` without `posixGroup` (no gidNumber: not Linux groups, no file rights); create / add / remove / delete / list; re-syncs the people concerned into Model Hub (`aistack/teams` on their namespace) |
 | `import-local-users.sh` | optional: local users -> LDAP with the same UID and password hash, then checks each UID |
 
 Access rules: anyone may **read** users and groups except passwords (SSSD needs this), and each user may **change their own password**. Only the Directory Manager can add or delete. Its password is in `LDAP_DM_PASS_FILE` (`/root/.ldap-dm.pass`).

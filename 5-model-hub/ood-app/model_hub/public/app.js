@@ -189,7 +189,7 @@ async function renderEndpoints() {
   $('#eps').innerHTML = list.length ? `<div class="card border-0 shadow-sm"><div class="list-group list-group-flush">${list.map(e => `
       <div class="list-group-item py-3"><div class="d-flex flex-wrap align-items-center gap-3">
         ${kindIcon(e.runtime === 'vllm' ? 'LLM' : '')}
-        <div class="me-auto min-w-0"><div class="d-flex align-items-center gap-2"><a class="fw-semibold text-decoration-none" href="#/endpoint/${enc(e.name)}">${h(e.name)}</a>${stateBadge(e.state)}</div>
+        <div class="me-auto min-w-0"><div class="d-flex align-items-center gap-2"><a class="fw-semibold text-decoration-none" href="#/endpoint/${enc(e.name)}">${h(e.name)}</a>${stateBadge(e.state)}${shareBadge(e.share)}</div>
           <div class="small text-body-secondary text-truncate">${h(e.model)} · ${e.runtime === 'vllm' ? 'vLLM' : 'MLflow'} ·
             <i class="bi bi-${e.gpu ? 'gpu-card' : 'cpu'}"></i> ${e.gpu ? (e.gpu > 1 ? e.gpu + ' GPUs' : 'GPU') : 'CPU'}${e.node ? ' · ' + h(e.node) : ''} · <i class="bi bi-hourglass-split"></i> ${left(e.expires)}</div>
           ${e.why ? `<div class="small text-${STATE[e.state] === 'danger' ? 'danger' : 'body-secondary'}">${h(e.why)}</div>` : ''}</div>
@@ -199,6 +199,44 @@ async function renderEndpoints() {
     : `<div class="card border-0 shadow-sm"><div class="card-body">${empty('hdd-network', 'No endpoints yet.<br><a href="#/">Pick a model and deploy it</a>')}</div></div>`;
   app.querySelectorAll('[data-del]').forEach(b => b.onclick = () => del(b.dataset.del));
   timer = setTimeout(renderEndpoints, 5000);
+}
+const shareText = s => s.all ? 'Shared with everyone' : 'Shared with ' +
+  [...s.users, ...s.teams.map(t => `team ${t}`)].join(', ');
+const shareBadge = s => s && (s.all || s.users.length || s.teams.length)
+  ? `<span class="badge rounded-pill text-bg-light border" title="${h(shareText(s))}"><i class="bi bi-people me-1"></i>${s.all ? 'everyone' : 'shared'}</span>` : '';
+async function shareDialog(ep) {
+  const s = ep.share || { users: [], teams: [], all: false };
+  let teams = [];
+  try { teams = await api('teams'); } catch (e) { /* no LDAP from here: people still work */ }
+  const mode = s.all ? 'all' : (s.users.length || s.teams.length) ? 'some' : 'me';
+  const url = `${ME.gateway?.url || ''}/${ME.user}/${ep.name}${ep.path}`;
+  $('#share-title').textContent = `Share ${ep.name}`;
+  $('#share-body').innerHTML = `
+    ${[['me', 'Only me'], ['some', 'Chosen people and teams'], ['all', 'Everyone with a cluster account']].map(([v, t]) => `
+      <div class="form-check"><input class="form-check-input" type="radio" name="smode" id="sm-${v}" value="${v}" ${mode === v ? 'checked' : ''}>
+        <label class="form-check-label" for="sm-${v}">${t}</label></div>`).join('')}
+    <div id="some" class="mt-3 ps-4">
+      <label class="form-label small" for="susers">People (user names, comma separated)</label>
+      <input class="form-control form-control-sm mb-2" id="susers" value="${h(s.users.join(', '))}" placeholder="bob, carol">
+      <div class="small mb-1">Teams</div>
+      ${teams.length ? teams.map(t => `<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" id="st-${h(t)}" value="${h(t)}" ${s.teams.includes(t) ? 'checked' : ''}>
+          <label class="form-check-label small" for="st-${h(t)}">${h(t)}</label></div>`).join('')
+        : '<div class="small text-body-secondary">No teams yet (the admin makes them).</div>'}</div>
+    <div class="small text-body-secondary mt-3">They call it with <b>their own</b> API key at<br><code class="text-break">${h(url)}</code>
+      <br>It runs on your GPU and your time; changes take effect within a minute.</div>
+    <div id="share-err" class="mt-2"></div>`;
+  const sync = () => $('#some').classList.toggle('d-none', $('input[name=smode]:checked').value !== 'some');
+  $('#share-body').querySelectorAll('input[name=smode]').forEach(r => r.onchange = sync); sync();
+  const m = bootstrap.Modal.getOrCreateInstance($('#share'));
+  $('#share-ok').onclick = async () => {
+    const v = $('input[name=smode]:checked').value;
+    const body = v === 'all' ? { all: true, users: [], teams: [] } : v === 'me' ? { all: false, users: [], teams: [] }
+      : { all: false, users: $('#susers').value.split(',').map(x => x.trim()).filter(Boolean),
+          teams: [...$('#share-body').querySelectorAll('input[type=checkbox]:checked')].map(c => c.value) };
+    try { await api(`endpoints/${enc(ep.name)}/share`, { method: 'POST', body }); m.hide(); toast('Sharing saved'); route(); }
+    catch (e) { $('#share-err').innerHTML = alertBox(e); }
+  };
+  m.show();
 }
 function del(name) {
   $('#confirm-body').innerHTML = `Delete <b>${h(name)}</b>? It stops answering, and its GPU/CPU go back to the cluster.`;
@@ -227,13 +265,16 @@ async function renderEndpoint(name, tab = 'play') {
     <div class="d-flex flex-wrap align-items-center gap-3 mb-3">${kindIcon(ep.runtime === 'vllm' ? 'LLM' : '')}
       <div class="me-auto"><div class="d-flex align-items-center gap-2"><h1 class="h3 mb-0">${h(name)}</h1>${stateBadge(ep.state)}</div>
         <div class="small text-body-secondary">${h(ep.model)} · ${ep.gpu ? (ep.gpu > 1 ? ep.gpu + ' GPUs' : 'GPU') : 'CPU'}${ep.node ? ' on ' + h(ep.node) : ''} · ${left(ep.expires)}</div></div>
-      <button class="btn btn-outline-danger" id="del"><i class="bi bi-trash me-1"></i>Delete</button></div>
+      <div class="d-flex gap-2"><button class="btn btn-outline-primary" id="shr"><i class="bi bi-people me-1"></i>Share</button>
+        <button class="btn btn-outline-danger" id="del"><i class="bi bi-trash me-1"></i>Delete</button></div></div>
+    ${ep.share && (ep.share.all || ep.share.users.length || ep.share.teams.length) ? `<div class="small text-body-secondary mb-3"><i class="bi bi-people me-1"></i>${shareText(ep.share)}</div>` : ''}
     ${waiting ? (ep.state === 'failed' ? alertBox(`Failed: ${ep.why}. Check the Logs tab.`)
        : alertBox(`${ep.state[0].toUpperCase() + ep.state.slice(1)}${ep.why ? ': ' + ep.why : ''}. This page refreshes by itself.`, 'warning', 'hourglass-split')) : ''}
     <ul class="nav nav-tabs mb-3">${[['play', 'Playground', 'play-circle'], ['api', 'API', 'code-square'], ['logs', 'Logs', 'terminal']].map(([k, t, i]) =>
       `<li class="nav-item"><button class="nav-link ${tab === k ? 'active' : ''}" data-tab="${k}"><i class="bi bi-${i} me-1"></i>${t}</button></li>`).join('')}</ul>
     <div id="tab"></div>`;
   $('#del').onclick = () => del(name);
+  $('#shr').onclick = () => shareDialog(ep);
   app.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { clearTimeout(timer); renderEndpoint(name, b.dataset.tab); });
   if (tab === 'play') playground(ep, info);
   if (tab === 'api') apiTab(ep, info);
@@ -454,7 +495,7 @@ print(r.json())`;
       <p class="text-body-secondary small">A plain HTTP JSON API: use it from any app or tool (Flask, FastAPI, Streamlit, Gradio, a notebook, a script).</p>
       ${gw ? `<h2 class="h6"><i class="bi bi-globe2 me-1"></i>From anywhere: your laptop or the cluster</h2>
       <p class="small text-body-secondary mb-2">Through the gateway, with your personal API key (<a href="#/key">My API key</a>).
-        Put it in an environment variable: <code>export MH_KEY=mh~…</code>. Only you can call your endpoints.</p>
+        Put it in an environment variable: <code>export MH_KEY=mh~…</code>. Only you, and whoever you <b>Share</b> it with (each with their own key), can call it.</p>
       ${table([
         row('URL', copyable('g-url', gurl)),
         llm && row('Base URL', `${copyable('g-base', gbase + '/v1')} <span class="text-body-secondary">for OpenAI client libraries (api_key = your key, model = <code>${h(ep.name)}</code>)</span>`),
@@ -552,10 +593,10 @@ with mlflow.start_run():
 
 // ---------- routing ----------
 async function renderKey() {
-  app.innerHTML = header('My API key', 'One key for all your endpoints, from anywhere.') + spinner();
+  app.innerHTML = header('My API key', 'One key for every endpoint you may call (yours and those shared with you), from anywhere.') + spinner();
   let k; try { k = await api('key'); } catch (e) { app.innerHTML = header('My API key') + alertBox(e); return; }
   const gw = ME.gateway?.url;
-  app.innerHTML = header('My API key', 'One key for all your endpoints, from anywhere.') + `
+  app.innerHTML = header('My API key', 'One key for every endpoint you may call (yours and those shared with you), from anywhere.') + `
     <div class="row g-4"><div class="col-lg-7"><div class="card border-0 shadow-sm"><div class="card-body">
       <p>${k.exists ? `<i class="bi bi-key-fill text-success me-1"></i>You have a key, made ${h(new Date(k.created).toLocaleString())}.`
                     : '<i class="bi bi-key me-1"></i>You have no key yet.'}</p>

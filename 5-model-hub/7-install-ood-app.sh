@@ -48,6 +48,7 @@ json.dump({
     "partition": "$BRIDGE_PARTITION",
     "hours_default": $ENDPOINT_HOURS_DEFAULT, "hours_max": $ENDPOINT_HOURS_MAX,   # per-user limits: their quota
     "slurm_bin": "$SLURM_BIN",
+    "ldap_base": "$LDAP_BASE",
     "gateway": {"url": "$GATEWAY_URL", "ca": "$ca" == "yes"},
     "models_root": "$MODELS_ROOT",
     "ssh": {"login": "$MASTER_HOST", "jump": "$SSH_JUMP"},

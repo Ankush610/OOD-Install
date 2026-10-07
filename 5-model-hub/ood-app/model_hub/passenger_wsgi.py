@@ -314,6 +314,7 @@ def endpoints():
         out.append({"name": name, "runtime": rt, "model": ann.get("model-hub/model"), "expires": ann.get("model-hub/expires"),
                     "state": state, "why": why, "image": ctr.get("image"), "gpu": gpu_of(pod) if pod else 0,
                     "node": pod["spec"].get("nodeName") if pod else None, "ip": s["spec"].get("clusterIP"),
+                    "share": share_of(ann),
                     "path": "/v1/chat/completions" if rt == "vllm" else "/invocations"})
     return sorted(out, key=lambda e: e["name"])
 
@@ -340,6 +341,43 @@ def predict(name, body):
         raise Fail(e.code, e.read()[:2000].decode(errors="replace"))
     except OSError as e:
         raise Fail(502, f"endpoint not reachable: {e}")
+
+
+# ---------- sharing (the gateway reads these annotations on the endpoint's Service) ----------
+SHARE = ("model-hub/share-users", "model-hub/share-teams", "model-hub/share-all")
+LINUX_NAME = re.compile(r"^[a-z_][a-z0-9_.-]{0,31}$")
+
+
+def share_of(ann):
+    split = lambda s: [n for n in (s or "").split(",") if n]
+    return {"users": split(ann.get(SHARE[0])), "teams": split(ann.get(SHARE[1])), "all": ann.get(SHARE[2]) == "true"}
+
+
+def teams():
+    """All teams (../1-ldap/group.sh): groupOfNames that aren't someone's personal posixGroup."""
+    out = subprocess.run(["ldapsearch", "-x", "-LLL", "-o", "ldif-wrap=no", "-H", "ldap://localhost",
+                          "-b", f"ou=Groups,{SITE['ldap_base']}", "(&(objectClass=groupOfNames)(!(objectClass=posixGroup)))",
+                          "cn"], capture_output=True, text=True, timeout=10).stdout
+    return sorted(l[4:] for l in out.splitlines() if l.startswith("cn: "))
+
+
+def set_share(name, body):
+    users = sorted({u.strip() for u in body.get("users", []) if u.strip()} - {USER})
+    tms = sorted({t.strip() for t in body.get("teams", []) if t.strip()})
+    for n in users + tms:
+        if not LINUX_NAME.match(n):
+            raise Fail(400, f"bad name {n!r}")
+    unknown = [u for u in users if subprocess.run(["getent", "passwd", u], capture_output=True).returncode]
+    if unknown:
+        raise Fail(400, "no such user: " + ", ".join(unknown))
+    missing = set(tms) - set(teams())
+    if missing:
+        raise Fail(400, "no such team: " + ", ".join(sorted(missing)) + " (the admin makes teams: 1-ldap/group.sh)")
+    if not kubectl("get", "svc", name, "--ignore-not-found", "-o", "name").strip():
+        raise Fail(404, f"no endpoint {name}")
+    kubectl("annotate", "svc", name, "--overwrite", f"{SHARE[0]}={','.join(users)}", f"{SHARE[1]}={','.join(tms)}",
+            f"{SHARE[2]}={'true' if body.get('all') else 'false'}")
+    return {"share": {"users": users, "teams": tms, "all": bool(body.get("all"))}}
 
 
 # ---------- personal API key (the gateway checks it; one per person) ----------
@@ -373,6 +411,8 @@ def route(method, path, body):
                 "gpu_types": SITE["gpu_types"], "limits": limits(),
                 "mlflow_ui": SITE["mlflow_ui"], "models_root": SITE["models_root"],
                 "ssh": SITE.get("ssh", {}), "gateway": SITE.get("gateway", {})}
+    if method == "GET" and a == ["teams"]:
+        return teams()
     if a == ["key"]:
         if method == "GET":
             return key_info()
@@ -400,6 +440,8 @@ def route(method, path, body):
             return {"logs": kubectl("logs", name, "--all-containers", "--tail=300", check=False)}
         if method == "GET" and a[2:] == ["key"]:
             return {"key": api_key(name)}
+        if method == "POST" and a[2:] == ["share"]:
+            return set_share(name, body)
         if method == "POST" and a[2:] == ["predict"]:
             return predict(name, body)
     raise Fail(404, f"no route {method} {path}")

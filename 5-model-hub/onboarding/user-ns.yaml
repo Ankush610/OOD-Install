@@ -10,6 +10,9 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: u-${USER_NAME}
+  annotations:
+    # the person's teams (../1-ldap/group.sh), for endpoints shared with a team; the gateway reads it
+    aistack/teams: "${USER_TEAMS}"
   labels:
     aistack/user: "${USER_NAME}"
     aistack/uid: "${USER_UID}"
