@@ -53,6 +53,7 @@ laptop / notebook ──HTTPS + personal key──► GATEWAY_URL/<owner>/<endpo
 | nginx + `gateway/auth.py`, one pod | namespace `GATEWAY_NS`, pinned to master, Service `LoadBalancer` on `GATEWAY_IP:443` (MetalLB) | one address for every model type (ML/DL `/invocations`, vLLM `/v1/...` streaming) |
 | personal key `mh~<user>~<48 hex>` | made in Model Hub (**API key**); only its SHA-256 is stored, Secret `model-hub-key` in `u-<user>` | shown once; new key = old one dead within a minute (auth.py caches 60 s) |
 | who may call | the owner, plus whoever they **Share** with (people, teams, everyone): annotations `model-hub/share-users`, `-teams`, `-all` on the endpoint's Service | each caller uses their own key; unknown endpoint and "not shared with you" both 403 |
+| "Shared with me" | Model Hub asks the gateway on port **8444**, proving the user with their cluster client certificate (`~/.kube/aistack.config`, CN = user, checked against the cluster CA); the gateway lists other users' endpoints that user may call | users can't list other namespaces themselves; 8444 serves only this, and only with a valid certificate (browsers never use it) |
 | a caller's teams | annotation `aistack/teams` on their namespace (`2-sync-users.sh`, from LDAP; `../1-ldap/group.sh` re-syncs) | users can't edit their namespace, so they can't join a team themselves |
 | vLLM's own key | added by the gateway, never seen by the caller | users only ever handle their personal key |
 | certificate | `gateway/tls.yaml`: a self-signed Rudra CA (cert-manager) for `GATEWAY_IP`/`GATEWAY_HOST`; or the customer's (`GATEWAY_TLS_SECRET`) | users download `gateway-ca.crt` from the API key page |
@@ -111,6 +112,7 @@ rerun `2-sync-users.sh`. Exceptions survive. Running endpoints keep the time the
 | deploy: `exceeded quota: gpus` | the user's GPUs are all in use (another endpoint) | stop one, or the admin: `--gpus 2` |
 | gateway: `{"error":"unknown or revoked API key"}` (401) | wrong/old key, or a new key less than a minute old | copy the key again (API key page); wait a minute after making one |
 | gateway: `{"error":"no such endpoint, or it isn't shared with you"}` (403) | wrong owner/endpoint in the URL, a deleted endpoint, or not shared with the caller | use the URL from the endpoint's API tab; the owner checks **Share** |
+| "Shared with me": `gateway didn't answer` | gateway not redeployed since this feature (no port 8444), or `GATEWAY_IP:8444` blocked | `sudo bash 8-gateway.sh`; from master: `curl -k https://<GATEWAY_IP>:8444/shared` should give 400 (no certificate) |
 | shared with a team, a member still gets 403 | their namespace doesn't list the team yet | `sudo bash 2-sync-users.sh <member>` (`group.sh` does it); then wait a minute (gateway cache) |
 | Share dialog: `no such team` | the team isn't in LDAP | the admin: `sudo bash ../1-ldap/group.sh create <team>` |
 | gateway: 403 for every call right after installing it | `2-sync-users.sh` hasn't run since `8-gateway.sh` (no read rights in user namespaces) | `sudo bash 2-sync-users.sh` |

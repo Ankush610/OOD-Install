@@ -16,8 +16,10 @@ import os
 import pwd
 import re
 import secrets
+import ssl
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -380,6 +382,30 @@ def set_share(name, body):
     return {"share": {"users": users, "teams": tms, "all": bool(body.get("all"))}}
 
 
+def shared_with_me():
+    """Other people's endpoints this user may call. Users can't look into other namespaces, so the gateway answers;
+    it knows who is asking from the user's cluster client certificate (~/.kube/aistack.config), on its port 8444."""
+    gw = SITE.get("gateway", {}).get("url")
+    if not gw or not os.path.isfile(KUBECONFIG):
+        return []
+    user = yaml.safe_load(open(KUBECONFIG))["users"][0]["user"]
+    ctx = ssl.create_default_context(cafile=os.path.join(HERE, "gateway-ca.crt") if SITE["gateway"].get("ca") else None)
+    with tempfile.TemporaryDirectory() as d:                      # 0700, gone after the call
+        for name, key in (("c", "client-certificate-data"), ("k", "client-key-data")):
+            with open(os.path.join(d, name), "wb") as f:
+                f.write(base64.b64decode(user[key]))
+        ctx.load_cert_chain(os.path.join(d, "c"), os.path.join(d, "k"))
+    host = urllib.parse.urlsplit(gw).hostname
+    try:
+        with urllib.request.urlopen(f"https://{host}:8444/shared", context=ctx, timeout=15) as r:
+            out = json.loads(r.read())
+    except (OSError, ValueError) as e:
+        raise Fail(502, f"gateway didn't answer ({e}); ask the admin")
+    for e in out:
+        e["url"] = f"{gw}/{e['owner']}/{e['name']}{e['path']}"
+    return out
+
+
 # ---------- personal API key (the gateway checks it; one per person) ----------
 def key_info():
     s = kubectl("get", "secret", "model-hub-key", "--ignore-not-found", "-o", "json").strip()
@@ -411,6 +437,8 @@ def route(method, path, body):
                 "gpu_types": SITE["gpu_types"], "limits": limits(),
                 "mlflow_ui": SITE["mlflow_ui"], "models_root": SITE["models_root"],
                 "ssh": SITE.get("ssh", {}), "gateway": SITE.get("gateway", {})}
+    if method == "GET" and a == ["shared"]:
+        return shared_with_me()
     if method == "GET" and a == ["teams"]:
         return teams()
     if a == ["key"]:

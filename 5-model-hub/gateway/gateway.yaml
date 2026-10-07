@@ -21,8 +21,11 @@ kind: ClusterRole
 metadata: { name: model-hub-gateway }
 rules:
 - apiGroups: [""]
-  resources: [services, secrets]
+  resources: [services, secrets, endpoints]          # endpoints: is a shared endpoint running ("Shared with me")
   verbs: [get]
+- apiGroups: [""]
+  resources: [services]                              # list a user namespace's endpoints ("Shared with me")
+  verbs: [list]
 ---
 # Teams: the gateway reads the caller's namespace annotation aistack/teams (namespaces are cluster-wide objects, so
 # this one is cluster-wide: get namespaces only, i.e. names, labels, annotations; nothing inside them).
@@ -32,7 +35,7 @@ metadata: { name: model-hub-gateway-teams }
 rules:
 - apiGroups: [""]
   resources: [namespaces]
-  verbs: [get]
+  verbs: [get, list]                                 # list: which user namespaces exist ("Shared with me")
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -73,11 +76,12 @@ spec:
       containers:
       - name: nginx
         image: ${GATEWAY_NGINX_IMAGE}
-        ports: [{ name: https, containerPort: 8443 }]
+        ports: [{ name: https, containerPort: 8443 }, { name: shared, containerPort: 8444 }]
         securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
         volumeMounts:
         - { name: config, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf, readOnly: true }
         - { name: tls, mountPath: /tls, readOnly: true }
+        - { name: kube-ca, mountPath: /kube-ca, readOnly: true }     # the cluster CA: checks users' client certificates
         - { name: tmp, mountPath: /tmp }
         resources: { requests: { cpu: 100m, memory: 64Mi }, limits: { cpu: "2", memory: 512Mi } }
         readinessProbe: { httpGet: { path: /healthz, port: 8443, scheme: HTTPS }, periodSeconds: 10 }
@@ -95,6 +99,7 @@ spec:
       volumes:
       - { name: config, configMap: { name: gateway } }
       - { name: tls, secret: { secretName: ${TLS_SECRET} } }
+      - { name: kube-ca, configMap: { name: kube-root-ca.crt } }      # k8s puts this ConfigMap in every namespace
       - { name: tmp, emptyDir: {} }
 ---
 apiVersion: v1
@@ -106,4 +111,6 @@ metadata:
 spec:
   type: LoadBalancer
   selector: { app: gateway }
-  ports: [{ name: https, port: 443, targetPort: 8443 }]
+  ports:
+  - { name: https, port: 443, targetPort: 8443 }
+  - { name: shared, port: 8444, targetPort: 8444 }   # client-certificate only: "Shared with me" in Model Hub

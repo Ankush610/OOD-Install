@@ -198,7 +198,39 @@ async function renderEndpoints() {
       </div></div>`).join('')}</div></div>`
     : `<div class="card border-0 shadow-sm"><div class="card-body">${empty('hdd-network', 'No endpoints yet.<br><a href="#/">Pick a model and deploy it</a>')}</div></div>`;
   app.querySelectorAll('[data-del]').forEach(b => b.onclick = () => del(b.dataset.del));
+  renderShared();
   timer = setTimeout(renderEndpoints, 5000);
+}
+
+// Other people's endpoints this user may call (the gateway knows; see passenger_wsgi.shared_with_me).
+let sharedAt = 0;
+async function renderShared() {
+  if (!$('#shared')) $('#eps').insertAdjacentHTML('afterend', `<h2 class="h5 mt-5 mb-3"><i class="bi bi-people me-2"></i>Shared with me</h2><div id="shared">${spinner()}</div>`);
+  if (Date.now() - sharedAt < 30000) return;                      // the list changes rarely: every 30 s is plenty
+  sharedAt = Date.now();
+  let list;
+  try { list = await api('shared'); } catch (e) { $('#shared').innerHTML = alertBox(e, 'warning'); return; }
+  $('#shared').innerHTML = list.length ? `<div class="card border-0 shadow-sm"><div class="list-group list-group-flush">${list.map((e, i) => `
+      <div class="list-group-item py-3"><div class="d-flex flex-wrap align-items-center gap-3">
+        ${kindIcon(e.runtime === 'vllm' ? 'LLM' : '')}
+        <div class="me-auto min-w-0"><div class="d-flex align-items-center gap-2"><span class="fw-semibold">${h(e.name)}</span>
+            <span class="small text-body-secondary">by ${h(e.owner)}</span>${stateBadge(e.ready ? 'ready' : 'stopped')}</div>
+          <div class="small text-body-secondary text-truncate">${h(e.model || '')}${e.expires ? ' · <i class="bi bi-hourglass-split"></i> ' + left(e.expires) : ''}</div>
+          <div class="small mt-1"><code class="text-break" id="sh-url-${i}">${h(e.url)}</code>
+            <button class="btn btn-sm btn-link p-0 ms-1" data-copy="sh-url-${i}" aria-label="Copy URL"><i class="bi bi-clipboard"></i></button></div></div>
+        <button class="btn btn-sm btn-outline-primary" data-ex="${i}"><i class="bi bi-code-slash me-1"></i>How to call</button>
+      </div></div>`).join('')}</div></div>`
+    : `<div class="card border-0 shadow-sm"><div class="card-body small text-body-secondary">Nothing shared with you yet. When someone shares an endpoint with you (or your team), it shows up here.</div></div>`;
+  $('#shared').querySelectorAll('[data-copy]').forEach(b => b.onclick = () => copy($('#' + b.dataset.copy).textContent));
+  $('#shared').querySelectorAll('[data-ex]').forEach(b => b.onclick = () => {
+    const e = list[+b.dataset.ex], ca = ME.gateway?.ca ? '--cacert gateway-ca.crt ' : '';
+    const body = e.runtime === 'vllm' ? `{"model":"${e.name}","messages":[{"role":"user","content":"Hello!"}]}` : '{"inputs": [[0]]}';
+    $('#yaml-title').textContent = `Call ${e.owner}/${e.name}`;
+    $('#yaml-body').textContent = `# with YOUR key (Model Hub -> API key), never the owner's\nexport MH_KEY='mh~${ME.user}~...'\n\n` +
+      `curl ${ca}${e.url} \\\n  -H "Authorization: Bearer $MH_KEY" \\\n  -H 'Content-Type: application/json' \\\n  -d '${body}'` +
+      (e.runtime === 'vllm' ? `\n\n# OpenAI client: base_url="${e.url.replace(/\/chat\/completions$/, '')}", api_key=os.environ["MH_KEY"], model="${e.name}"` : '\n\n# the request format is the owner\'s model\'s: ask them, or look at its MLflow signature');
+    bootstrap.Modal.getOrCreateInstance($('#yaml')).show();
+  });
 }
 const shareText = s => s.all ? 'Shared with everyone' : 'Shared with ' +
   [...s.users, ...s.teams.map(t => `team ${t}`)].join(', ');
