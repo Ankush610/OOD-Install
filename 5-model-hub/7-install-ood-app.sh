@@ -19,13 +19,15 @@ rm -rf "$APP"
 cp -r "$HERE/ood-app/model_hub" "$APP"
 cp "$HERE/render.py" "$APP/"
 rm -rf "$APP/__pycache__"
-# the gateway's self-signed CA (8-gateway.sh), so users can download it from My API key; none with a customer cert
+# the gateway's self-signed CA (8-gateway.sh), so users can download it from My API key; none with a customer cert.
+# Next to the app, NOT in public/: served from there as application/x-x509-ca-cert, which Chrome tries to install
+# as a certificate instead of saving ("Failed - network error"); the backend sends it as a plain download
 ca=no
 if [ -z "$GATEWAY_TLS_SECRET" ] && KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n "$GATEWAY_NS" get secret rudra-ca \
-     -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 -d > "$APP/public/gateway-ca.crt" && [ -s "$APP/public/gateway-ca.crt" ]; then
+     -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 -d > "$APP/gateway-ca.crt" && [ -s "$APP/gateway-ca.crt" ]; then
   ca=yes
 else
-  rm -f "$APP/public/gateway-ca.crt"
+  rm -f "$APP/gateway-ca.crt"
 fi
 
 echo "== 2. site.json"

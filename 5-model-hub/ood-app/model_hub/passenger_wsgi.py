@@ -423,6 +423,13 @@ def application(environ, start_response):
     try:
         n = int(environ.get("CONTENT_LENGTH") or 0)
         body = json.loads(environ["wsgi.input"].read(n) or b"{}") if n else {}
+        if method == "GET" and path.rstrip("/") == "/api/gateway-ca":
+            ca = os.path.join(HERE, "gateway-ca.crt")
+            if not os.path.isfile(ca):
+                raise Fail(404, "no gateway CA here (the gateway uses the site's own certificate)")
+            start_response("200 OK", [("Content-Type", "application/octet-stream"),
+                                      ("Content-Disposition", 'attachment; filename="gateway-ca.crt"')])
+            return [open(ca, "rb").read()]
         result = route(method, path, body)
         if result is None:
             data, ctype = static(path, environ.get("SCRIPT_NAME", ""))

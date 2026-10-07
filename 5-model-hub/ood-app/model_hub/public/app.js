@@ -459,7 +459,7 @@ print(r.json())`;
         row('URL', copyable('g-url', gurl)),
         llm && row('Base URL', `${copyable('g-base', gbase + '/v1')} <span class="text-body-secondary">for OpenAI client libraries (api_key = your key, model = <code>${h(ep.name)}</code>)</span>`),
         row('Header', '<code>Authorization: Bearer $MH_KEY</code>'),
-        ME.gateway?.ca && row('Certificate', 'Self-signed: download <a href="gateway-ca.crt" download><i class="bi bi-download me-1"></i>gateway-ca.crt</a> once and pass it as shown (or your browser/OS can trust it).'),
+        ME.gateway?.ca && row('Certificate', 'Self-signed: download <a href="api/gateway-ca" download="gateway-ca.crt"><i class="bi bi-download me-1"></i>gateway-ca.crt</a> once and pass it as shown (or your browser/OS can trust it).'),
       ])}
       ${codeBlock('g-curl', gcurl, 'Example (curl)')}
       ${codeBlock('g-py', gpy, 'Example (Python)')}` : ''}
@@ -573,7 +573,7 @@ async function renderKey() {
       <p>Call <code>${h(gw || '')}/${h(ME.user)}/&lt;endpoint&gt;/…</code> with the header <code>Authorization: Bearer $MH_KEY</code>.
         Each endpoint's <b>API</b> tab has ready-made examples.</p>
       ${ME.gateway?.ca ? `<p class="mb-0">The gateway uses a self-signed certificate. Download it once:
-        <a href="gateway-ca.crt" download><i class="bi bi-download me-1"></i>gateway-ca.crt</a>, then <code>curl --cacert gateway-ca.crt …</code></p>` : ''}
+        <a href="api/gateway-ca" download="gateway-ca.crt"><i class="bi bi-download me-1"></i>gateway-ca.crt</a>, then <code>curl --cacert gateway-ca.crt …</code></p>` : ''}
     </div></div></div></div>`;
   $('#mk').onclick = async () => {
     if (k.exists && !confirm('Make a new key? The old one stops working within a minute.')) return;
