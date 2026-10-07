@@ -42,7 +42,7 @@ USER = r"[a-z_][a-z0-9_.-]{0,31}"                                  # Linux user 
 KEY = re.compile(rf"^mh~({USER})~([0-9a-f]{{48}})$")
 NAME = re.compile(rf"^{USER}$")
 URI = re.compile(rf"^/({USER})/([a-z0-9]([a-z0-9-]{{0,40}}[a-z0-9])?)(/|$|\?)")
-CACHE_S = int(os.environ.get("CACHE_SECONDS", "60"))
+CACHE_S = int(os.environ.get("CACHE_SECONDS", "5"))
 API = os.environ.get("K8S_API", "https://kubernetes.default.svc")
 SA = "/var/run/secrets/kubernetes.io/serviceaccount"
 

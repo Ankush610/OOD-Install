@@ -89,7 +89,7 @@ spec:
       - name: auth
         image: ${GATEWAY_PY_IMAGE}
         command: [python3, -u, /app/auth.py]
-        env: [{ name: PORT, value: "8081" }, { name: CACHE_SECONDS, value: "60" }]
+        env: [{ name: PORT, value: "8081" }, { name: CACHE_SECONDS, value: "5" }]
         securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
         volumeMounts: [{ name: config, mountPath: /app/auth.py, subPath: auth.py, readOnly: true }]
         resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: "1", memory: 256Mi } }
