@@ -32,6 +32,9 @@ sys.path.insert(0, HERE)
 import render  # noqa: E402
 
 SITE = json.load(open(os.path.join(HERE, "site.json")))
+# PUN processes get no SLURM_CONF (OOD hands it only to its own adapter, via clusters.d), and squeue then
+# looks for the config in DNS and fails. Point it at the file.
+os.environ.setdefault("SLURM_CONF", SITE.get("slurm_conf", "/etc/slurm/slurm.conf"))
 ME = pwd.getpwuid(os.getuid())
 USER, HOME, UID, GID = ME.pw_name, ME.pw_dir, ME.pw_uid, ME.pw_gid
 NS = f"u-{USER}"
