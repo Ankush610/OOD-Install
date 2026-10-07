@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body class="bg-body-tertiary">
-  <nav class="navbar navbar-expand-md bg-body border-bottom sticky-top">
+  <nav class="navbar navbar-expand-md bg-body border-bottom sticky-top py-2">
     <div class="container-xl">
       <a class="navbar-brand d-flex align-items-center gap-2 fw-semibold" href="#/">
         <span class="brand-mark"><i class="bi bi-boxes"></i></span>Model Hub
@@ -17,15 +17,15 @@
       <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-controls="nav"
               aria-expanded="false" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>
       <div class="collapse navbar-collapse" id="nav">
-        <ul class="navbar-nav me-auto">
+        <ul class="navbar-nav me-auto gap-md-1 ms-md-3">
           <li class="nav-item"><a class="nav-link" data-nav="models" href="#/"><i class="bi bi-grid me-1"></i>Models</a></li>
-          <li class="nav-item"><a class="nav-link" data-nav="endpoints" href="#/endpoints"><i class="bi bi-hdd-network me-1"></i>Endpoints</a></li>
+          <li class="nav-item"><a class="nav-link" data-nav="endpoints" href="#/endpoints"><i class="bi bi-hdd-network me-1"></i>My endpoints</a></li>
           <li class="nav-item"><a class="nav-link" data-nav="key" href="#/key"><i class="bi bi-key me-1"></i>API key</a></li>
           <li class="nav-item"><a class="nav-link" data-nav="help" href="#/help"><i class="bi bi-question-circle me-1"></i>Help</a></li>
         </ul>
         <div class="d-flex align-items-center gap-2">
-          <span class="badge rounded-pill bg-body-secondary text-body border" id="who"></span>
-          <button class="btn btn-sm btn-outline-secondary" id="theme" type="button" aria-label="Toggle dark mode"><i class="bi bi-moon-stars"></i></button>
+          <span class="d-flex align-items-center gap-2 small" id="who"></span>
+          <button class="btn btn-sm btn-icon" id="theme" type="button" aria-label="Toggle dark mode"><i class="bi bi-moon-stars"></i></button>
         </div>
       </div>
     </div>
@@ -41,7 +41,7 @@
 
   <div class="modal fade" id="confirm" tabindex="-1" aria-labelledby="confirm-title" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
-      <div class="modal-header"><h1 class="modal-title fs-5" id="confirm-title">Delete endpoint?</h1>
+      <div class="modal-header"><h1 class="modal-title fs-5" id="confirm-title">Delete this endpoint?</h1>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
       <div class="modal-body" id="confirm-body"></div>
       <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -60,9 +60,9 @@
   </div>
   <div class="modal fade" id="yaml" tabindex="-1" aria-labelledby="yaml-title" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
-      <div class="modal-header"><h1 class="modal-title fs-5" id="yaml-title">What will be created</h1>
+      <div class="modal-header"><h1 class="modal-title fs-5" id="yaml-title"></h1>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
-      <div class="modal-body"><pre class="code mb-0" id="yaml-body"></pre></div>
+      <div class="modal-body" id="yaml-body"></div>
     </div></div>
   </div>
 
