@@ -1,0 +1,12 @@
+# Keycloak, pre-built ("optimized") for our setup: Postgres, health + metrics, served under /auth.
+# Build-time options go here; `start --optimized` then starts in seconds and never rebuilds at runtime
+# (it couldn't anyway: the container runs as KEYCLOAK_UID, which can't write /opt/keycloak).
+ARG KEYCLOAK_VERSION
+FROM quay.io/keycloak/keycloak:${KEYCLOAK_VERSION} AS build
+ARG KEYCLOAK_PATH=/auth
+ENV KC_DB=postgres KC_HEALTH_ENABLED=true KC_METRICS_ENABLED=true KC_HTTP_RELATIVE_PATH=${KEYCLOAK_PATH}
+RUN /opt/keycloak/bin/kc.sh build
+
+FROM quay.io/keycloak/keycloak:${KEYCLOAK_VERSION}
+COPY --from=build /opt/keycloak/ /opt/keycloak/
+ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]

@@ -26,6 +26,9 @@ This cluster: laptop → `network-node` (10.208.34.138) → `master` (192.168.40
 4-vscode/1-install-code-server.sh  release tarball -> CODE_SERVER_ROOT/<ver>, current symlink (shared /home)
 4-vscode/2-slurm-viewer.sh  viewer partition on master, OverSubscribe=FORCE:n, slurm.conf to every node
 4-vscode/3-install-ood-app.sh  envsubst ood-app/vscode -> /var/www/ood/apps/sys/vscode (Batch Connect)
+5-model-hub/1..7-*.sh         Model Hub: setup, users, images, tests, OOD app (v1 = git tag v1; v2 is built here)
+6-keycloak/1-install.sh     Keycloak + Postgres as podman quadlets on master (127.0.0.1), image built + pushed, permanent admin
+6-keycloak/2-realm.sh       realm CLUSTER_ID: LDAP users + groups read-only (kc.py = admin REST); Apache /auth proxy is in 2-ood
 ```
 
 Local sanity checks (no tests or linters):
@@ -64,4 +67,4 @@ python3 -c 'import ast,sys; [ast.parse(open(f).read()) for f in sys.argv[1:]]' 3
 
 ## Sibling repo
 
-`../AI-Stack` holds the design docs (see its `CLAUDE.md`): `docs/cluster/` (architecture, `master:5000` registry, installed versions), `docs/model-hub/` (full Model Hub design; the current scope is `docs/model-hub/versions/version-2/`; its `build-plan.md` lists what goes in `5-model-hub/version2/`. `5-model-hub/version1/` is the finished v1 (tag `v1`), kept as is), and test manifests in `k8s/examples/` (slurm-bridge, DRA GPUs).
+`../AI-Stack` holds the design docs (see its `CLAUDE.md`): `docs/cluster/` (architecture, `master:5000` registry, installed versions), `docs/model-hub/` (full Model Hub design; the current scope is `docs/model-hub/versions/version-2/`; its `build-plan.md` lists what goes in `5-model-hub/`; v1 is git tag `v1`), and test manifests in `k8s/examples/` (slurm-bridge, DRA GPUs).

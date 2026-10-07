@@ -61,6 +61,15 @@ auth:
 # proxy for interactive apps
 node_uri: '/node'
 rnode_uri: '/rnode'
+# Keycloak (6-keycloak) listens on 127.0.0.1 only; browsers reach it here, with OOD's certificate on port 443.
+# No login on this path: Keycloak IS the login page. Until 6-keycloak is installed it just answers 503.
+custom_vhost_directives:
+  - '<Location "${KEYCLOAK_PATH}">'
+  - '  ProxyPass "http://127.0.0.1:${KEYCLOAK_PORT}${KEYCLOAK_PATH}"'
+  - '  ProxyPassReverse "http://127.0.0.1:${KEYCLOAK_PORT}${KEYCLOAK_PATH}"'
+  - '  RequestHeader set X-Forwarded-Proto "https"'
+  - '  RequestHeader set X-Forwarded-Port "443"'
+  - '</Location>'
 EOF
 /opt/ood/ood-portal-generator/sbin/update_ood_portal
 
@@ -80,6 +89,8 @@ v2:
 EOF
 
 echo "== 8. Start web server, open https"
+# a broken config would take OOD down on restart: check first
+apachectl configtest || { echo "Apache config error (see above): web server NOT restarted." >&2; exit 1; }
 systemctl enable httpd
 systemctl restart httpd
 if systemctl is-active -q firewalld; then
@@ -91,6 +102,7 @@ echo "== 9. Check"
 rpm -q ondemand mod_ldap
 echo "/                   -> $(curl -skI -o /dev/null -w '%{http_code}' https://localhost/)   (expect 302)"
 echo "/pun/sys/dashboard  -> $(curl -skI -o /dev/null -w '%{http_code}' https://localhost/pun/sys/dashboard)   (expect 401)"
+echo "${KEYCLOAK_PATH}/realms/master -> $(curl -sk -o /dev/null -w '%{http_code}' https://localhost${KEYCLOAK_PATH}/realms/master)   (expect 200 once 6-keycloak is installed, 503 before)"
 cat <<EOF
 
 Done. Test an LDAP login (asks for the password, expect 200):
