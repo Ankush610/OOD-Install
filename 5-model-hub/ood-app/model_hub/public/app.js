@@ -1,5 +1,5 @@
 // Model Hub UI (Bootstrap 5.3). Talks only to this app's backend (passenger_wsgi.py, running as the logged-in user):
-//   GET api/me | api/models | api/models/<name>/<version> | api/endpoints | api/endpoints/<n>/logs | /key
+//   GET api/me | api/models | api/models/<name>/<version> | api/endpoints | api/endpoints/<n>/logs
 //   POST api/deploy | api/endpoints/<n>/predict      DELETE api/endpoints/<n>
 // Routes: #/  #/model/<name>[/<version>]  #/endpoints  #/endpoint/<name>  #/key  #/help
 'use strict';
@@ -26,14 +26,30 @@ const spinner = (msg = 'Loading…') => `<div class="text-center text-body-secon
     <div class="spinner-border text-primary mb-3" role="status"></div><div>${h(msg)}</div></div>`;
 const alertBox = (e, kind = 'danger', icon = 'exclamation-triangle') =>
   `<div class="alert alert-${kind} d-flex gap-2 align-items-start" role="alert"><i class="bi bi-${icon} mt-1"></i><div>${h(e.message || e)}</div></div>`;
-const empty = (icon, html) => `<div class="text-center text-body-secondary py-5"><i class="bi bi-${icon} display-5 d-block mb-3"></i>${html}</div>`;
-const header = (title, sub = '', right = '') => `<div class="d-flex flex-wrap align-items-center gap-3 mb-4">
-    <div class="me-auto"><h1 class="h3 mb-0">${title}</h1>${sub ? `<div class="text-body-secondary small mt-1">${sub}</div>` : ''}</div>${right}</div>`;
-const KIND = { ML: ['graph-up', 'primary'], DL: ['cpu', 'info'], LLM: ['chat-dots', 'success'] };
+const empty = (icon, title, html = '') => `<div class="text-center text-body-secondary py-5 px-3"><i class="bi bi-${icon} fs-1 d-block mb-2 opacity-50"></i>
+    <div class="fw-semibold text-body mb-1">${title}</div>${html}</div>`;
+const header = (title, sub = '', right = '') => `<div class="d-flex flex-wrap align-items-end gap-3 mb-4">
+    <div class="me-auto"><h1 class="h3 fw-semibold mb-1">${title}</h1>${sub ? `<div class="text-body-secondary">${sub}</div>` : ''}</div>${right}</div>`;
+const back = (href, label) => `<a class="d-inline-flex align-items-center gap-1 small text-body-secondary text-decoration-none mb-3" href="${href}"><i class="bi bi-arrow-left"></i>${label}</a>`;
+const KIND = { ML: ['graph-up', 'primary', 'Classic ML'], DL: ['cpu', 'info', 'Deep learning'], LLM: ['chat-dots', 'success', 'Chat model'] };
 const kindIcon = k => { const [i, c] = KIND[k] || ['box', 'secondary']; return `<span class="kind-icon bg-${c}-subtle text-${c}-emphasis"><i class="bi bi-${i}"></i></span>`; };
-const STATE = { ready: 'success', loading: 'info', starting: 'info', queued: 'warning', failed: 'danger', stopped: 'secondary' };
-const stateBadge = s => `<span class="badge rounded-pill text-bg-${STATE[s] || 'secondary'}">${h(s)}</span>`;
+const kindName = k => KIND[k]?.[2] || 'Model';
+// state word from the backend -> what a person reads, and its colour
+const STATE = { ready: ['success', 'Ready'], loading: ['info', 'Starting'], starting: ['info', 'Starting'], queued: ['warning', 'Waiting for GPU'],
+                failed: ['danger', 'Failed'], stopped: ['secondary', 'Stopped'] };
+const stateBadge = s => { const [c, t] = STATE[s] || ['secondary', s];
+  return `<span class="status bg-${c}-subtle text-${c}-emphasis ${['loading', 'starting', 'queued'].includes(s) ? 'pulse' : ''}">${h(t)}</span>`; };
+const cap = s => s ? s[0].toUpperCase() + s.slice(1) : '';
+// "models:/churn/3" -> "churn · v3"
+const modelLabel = uri => { const m = /^models:\/(.+)\/(\d+)$/.exec(uri || ''); return m ? `${h(m[1])} · v${m[2]}` : h(uri); };
+const hwLabel = n => n ? `<span><i class="bi bi-gpu-card"></i>${n > 1 ? n + ' GPUs' : 'GPU'}</span>` : '<span><i class="bi bi-cpu"></i>CPU</span>';
 const when = ms => ms ? new Date(ms).toLocaleString() : '';
+const ago = ms => {
+  if (!ms) return '';
+  const s = (ms - Date.now()) / 1000, rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  for (const [u, n] of [['day', 86400], ['hour', 3600], ['minute', 60]]) if (Math.abs(s) >= n) return rtf.format(Math.round(s / n), u);
+  return 'just now';
+};
 const bytes = n => { if (!n) return ''; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return `${n.toFixed(i ? 1 : 0)} ${u[i]}`; };
 const num = v => typeof v !== 'number' ? h(v) : Math.abs(v) >= 1e4 || Number.isInteger(v) ? v.toLocaleString() : +v.toPrecision(4);
 // sso (Keycloak): through OOD's /node proxy, already logged in; else straight to MLflow's port (asks for a password)
@@ -46,37 +62,62 @@ const sigLine = cols => !cols?.length ? null : cols[0]['tensor-spec'] && cols.le
 function left(iso) {
   if (!iso) return '';
   const s = (Date.parse(iso) - Date.now()) / 1000;
-  return s <= 0 ? 'time limit reached' : `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m left`;
+  return s <= 0 ? 'Time is up' : `Stops in ${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m`;
 }
-const codeBlock = (id, text, label) => `<div class="mb-3"><div class="d-flex align-items-center mb-1"><span class="fw-semibold small me-auto">${label}</span>
-    <button class="btn btn-sm btn-link text-decoration-none" data-copy="${id}"><i class="bi bi-clipboard me-1"></i>Copy</button></div>
-    <pre class="code mb-0" id="${id}">${h(text)}</pre></div>`;
-const wireCopies = () => app.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => copy($('#' + b.dataset.copy).textContent));
+const timeLeft = iso => iso ? `<span><i class="bi bi-clock"></i>${left(iso)}</span>` : '';
+const codeBlock = (id, text, label = '') => `<div class="mb-3">${label ? `<div class="small fw-semibold mb-1">${label}</div>` : ''}
+    <div class="code-wrap"><pre class="code mb-0" id="${id}">${h(text)}</pre>
+    <button class="btn btn-sm btn-outline-secondary btn-copy bg-body" data-copy="${id}"><i class="bi bi-clipboard me-1"></i>Copy</button></div></div>`;
+const wireCopies = (root = app) => root.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => copy(document.getElementById(b.dataset.copy).textContent));
+// the gateway's self-signed certificate: one file for everybody, whoever owns the endpoint
+const caLink = (label = 'Download certificate') => `<a class="btn btn-sm btn-outline-secondary" href="api/gateway-ca" download="gateway-ca.crt"><i class="bi bi-download me-1"></i>${label}</a>`;
+// the 3 steps to call any endpoint through the gateway: key, certificate, request
+function callSteps(curl, py) {
+  const ca = ME.gateway?.ca;
+  return `<ol class="steps">
+    <li><div class="fw-semibold">Get your API key</div>
+      <div class="small text-body-secondary mb-2">Use your own key. It works for your endpoints and the ones shared with you.</div>
+      <a class="btn btn-sm btn-outline-secondary" href="#/key"><i class="bi bi-key me-1"></i>Go to API key</a></li>
+    ${ca ? `<li><div class="fw-semibold">Download the certificate</div>
+      <div class="small text-body-secondary mb-2">One-time download. It's the same file for everyone. Save it in the folder you run your code from.</div>
+      ${caLink('gateway-ca.crt')}</li>` : ''}
+    <li><div class="fw-semibold mb-2">Send a request</div>
+      ${py ? `<ul class="nav nav-underline small mb-2" role="tablist">
+          <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#ex-curl" type="button" role="tab">curl</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#ex-py" type="button" role="tab">Python</button></li></ul>
+        <div class="tab-content"><div class="tab-pane show active" id="ex-curl" role="tabpanel">${codeBlock('x-curl', curl)}</div>
+          <div class="tab-pane" id="ex-py" role="tabpanel">${codeBlock('x-py', py)}</div></div>` : codeBlock('x-curl', curl)}</li></ol>`;
+}
 
 // ---------- Models ----------
 async function renderModels() {
-  app.innerHTML = spinner('Reading your models from MLflow…');
+  app.innerHTML = spinner('Loading models…');
   let list;
   try { list = await api('models'); } catch (e) { app.innerHTML = alertBox(e); return; }
-  app.innerHTML = header('Models', `${list.length} registered in MLflow`,
-      `<a class="btn btn-outline-primary" href="#/help"><i class="bi bi-question-circle me-1"></i>How do I add mine?</a>`) +
-    `<div class="input-group mb-4" style="max-width:36rem"><span class="input-group-text"><i class="bi bi-search"></i></span>
-      <input class="form-control" id="q" placeholder="Search models" aria-label="Search models"></div>
-    <div class="row g-3" id="grid"></div>`;
+  app.innerHTML = header('Models', 'Pick a model to try it, or put it online as an API.',
+      `<a class="btn btn-outline-secondary" href="#/help"><i class="bi bi-plus-lg me-1"></i>Add your model</a>`) +
+    (list.length ? `<div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+      <div class="input-group" style="max-width:24rem"><span class="input-group-text bg-body"><i class="bi bi-search"></i></span>
+        <input class="form-control border-start-0" id="q" type="search" placeholder="Search by name or description" aria-label="Search models"></div>
+      <span class="small text-body-secondary ms-auto" id="count"></span></div>` : '') +
+    `<div class="row g-3" id="grid"></div>`;
   const draw = () => {
-    const q = $('#q').value.toLowerCase();
+    const q = ($('#q')?.value || '').toLowerCase();
     const rows = list.filter(m => (m.name + ' ' + m.description).toLowerCase().includes(q));
+    if ($('#count')) $('#count').textContent = `${rows.length} model${rows.length === 1 ? '' : 's'}`;
     $('#grid').innerHTML = rows.map(m => `<div class="col-md-6 col-xl-4">
-        <a class="card h-100 border-0 shadow-sm text-decoration-none model-card" href="#/model/${enc(m.name)}"><div class="card-body">
-          <div class="d-flex gap-3 align-items-center mb-2">${kindIcon(m.tags.path ? 'LLM' : '')}
-            <div class="min-w-0"><div class="fw-semibold text-truncate">${h(m.name)}</div>
-              <div class="small text-body-secondary">latest v${m.latest ?? '–'}${m.tags.path ? ' · LLM' : ''}</div></div></div>
-          <p class="card-text text-body-secondary small mb-0">${h(m.description) || '<span class="fst-italic">No description</span>'}</p></div>
-          <div class="card-footer bg-transparent border-0 small text-body-secondary pt-0"><i class="bi bi-clock me-1"></i>${when(m.updated)}</div></a></div>`).join('')
-      || `<div class="col-12">${empty('inbox', list.length ? 'No models match your search.'
-           : 'No registered models yet.<br><a href="#/help">How to register one</a>')}</div>`;
+        <a class="card h-100 text-decoration-none text-body model-card" href="#/model/${enc(m.name)}"><div class="card-body d-flex flex-column">
+          <div class="d-flex gap-3 align-items-center mb-3">${kindIcon(m.tags.path ? 'LLM' : '')}
+            <div class="min-w-0 me-auto"><div class="fw-semibold text-truncate" title="${h(m.name)}">${h(m.name)}</div>
+              <div class="small text-body-secondary">${m.tags.path ? 'Chat model' : 'Model'}</div></div>
+            <span class="badge rounded-pill bg-body-secondary text-body-secondary fw-medium">v${m.latest ?? '–'}</span></div>
+          <p class="card-text small text-body-secondary clamp-2 mb-3">${h(m.description) || 'No description yet.'}</p>
+          <div class="small text-body-secondary mt-auto" title="${h(when(m.updated))}">Updated ${ago(m.updated)}</div></div></a></div>`).join('')
+      || `<div class="col-12"><div class="card">${list.length ? empty('search', 'No matches', 'Try a different word.')
+           : empty('box-seam', 'No models yet', 'Register a model in MLflow and it shows up here.<div class="mt-3"><a class="btn btn-primary" href="#/help">Show me how</a></div>')}</div></div>`;
   };
-  $('#q').oninput = draw; draw();
+  if ($('#q')) $('#q').oninput = draw;
+  draw();
 }
 
 // ---------- One model: details + deploy ----------
@@ -93,7 +134,6 @@ async function renderModel(name, version) {
   const running = eps.filter(e => e.model === `models:/${name}/${info.version}` && e.state !== 'stopped');
   const run = info.run, llm = info.llm || {};
   const runUrl = run ? `${mlflowUI()}#/experiments/${enc(run.experiment_id)}/runs/${enc(run.id)}` : null;
-  const dd = (k, v) => v ? `<dt class="col-sm-3">${k}</dt><dd class="col-sm-9">${v}</dd>` : '';
   const metrics = Object.entries(info.metrics || {});
   const params = Object.entries(info.params || {});
   const libs = info.libs || [], drift = libs.filter(l => !l.ok);
@@ -101,63 +141,78 @@ async function renderModel(name, version) {
   const hw = (isML ? ['<option value="">CPU</option>'] : [!isLLM && '<option value="">CPU</option>',
     ...ME.gpu_types.flatMap(t => Array.from({ length: isLLM ? Math.max(1, ME.limits.gpus) : 1 }, (_, i) =>
       `<option value="${h(t)}" data-gpus="${i + 1}">${i + 1} GPU${i ? 's' : ''} · ${h(t.toUpperCase())}</option>`))]).filter(Boolean).join('');
-  const gpuNote = `You may use ${ME.limits.gpus} GPU${ME.limits.gpus === 1 ? '' : 's'} at a time` +
-    (isLLM && ME.limits.gpus > 1 ? ' (2+ GPUs split one big model, e.g. a 70B).' : '.');
+  const gpuNote = `You can use up to ${ME.limits.gpus} GPU${ME.limits.gpus === 1 ? '' : 's'}` +
+    (isLLM && ME.limits.gpus > 1 ? '. Pick 2 or more for very large models.' : '.');
   const defName = `${name}-v${info.version}`.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').slice(0, 42);
   const versions = Array.from({ length: latest }, (_, i) => latest - i);
-  app.innerHTML = `<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="#/">Models</a></li>
-      <li class="breadcrumb-item active" aria-current="page">${h(name)}</li></ol></nav>
-    <div class="d-flex align-items-center gap-3 mb-4">${kindIcon(info.kind)}<h1 class="h3 mb-0">${h(name)}</h1>
-      <span class="badge text-bg-${KIND[info.kind]?.[1] || 'secondary'}">${info.kind}</span></div>
-    <div class="row g-4">
-      <div class="col-lg-7"><div class="card border-0 shadow-sm h-100"><div class="card-body">
-        <div class="d-flex align-items-center gap-3 mb-3"><h2 class="h5 mb-0 me-auto">Details</h2>
-          <select class="form-select form-select-sm w-auto" id="ver" aria-label="Version">${versions.map(v =>
-            `<option value="${v}" ${v === info.version ? 'selected' : ''}>Version ${v}${v === latest ? ' (latest)' : ''}</option>`).join('')}</select></div>
-        ${info.description ? `<p class="mb-3">${h(info.description)}</p>` : ''}
-        <dl class="row small mb-3">
-          ${dd('Served with', isLLM ? 'vLLM (OpenAI API)' : 'MLflow serving (<code>/invocations</code>)')}
-          ${isLLM ? dd('Folder', `<span class="font-monospace">${h(info.path)}</span>`) : dd('Flavor', h((info.flavors || []).join(', ')))}
-          ${!isLLM && (info.inputs?.length || info.outputs?.length) ? dd('Does', `${sigLine(info.inputs) || '?'} <i class="bi bi-arrow-right mx-1"></i> ${sigLine(info.outputs) || '?'}
-              <div class="text-body-secondary">Full request format: the endpoint's <b>API</b> tab.</div>`) : ''}
-          ${isLLM ? dd('Model', [llm.architecture && h(llm.architecture), llm.params && `${(llm.params / 1e9).toFixed(llm.params < 1e10 ? 2 : 0)} B parameters`,
-               llm.dtype && h(llm.dtype), llm.context && `${num(llm.context)} tokens context`].filter(Boolean).join(' · ')) : ''}
+  const fact = (k, v) => v ? `<div class="col-6 col-md"><div class="fact"><div class="small text-body-secondary">${k}</div><div class="v text-truncate" title="${h(String(v).replace(/<[^>]+>/g, ''))}">${v}</div></div></div>` : '';
+  const facts = [
+    fact('Type', kindName(info.kind)),
+    isLLM && fact('Parameters', llm.params && `${(llm.params / 1e9).toFixed(llm.params < 1e10 ? 2 : 0)} B`),
+    isLLM && fact('Context', llm.context && `${num(llm.context)} tokens`),
+    fact('Size', bytes(isLLM ? llm.size : info.size)),
+    fact('Added', `<span title="${h(when(info.created))}">${ago(info.created)}</span>`),
+    run?.user && fact('By', h(run.user)),
+  ].filter(Boolean).join('');
+  const dd = (k, v) => v ? `<dt class="col-sm-4 fw-normal text-body-secondary">${k}</dt><dd class="col-sm-8">${v}</dd>` : '';
+  app.innerHTML = `${back('#/', 'All models')}
+    <div class="d-flex flex-wrap align-items-center gap-3 mb-4">${kindIcon(info.kind)}
+      <div class="me-auto min-w-0"><h1 class="h3 fw-semibold mb-0 text-break">${h(name)}</h1>
+        <div class="text-body-secondary">${info.description ? h(info.description) : kindName(info.kind)}</div></div>
+      <select class="form-select w-auto" id="ver" aria-label="Version">${versions.map(v =>
+        `<option value="${v}" ${v === info.version ? 'selected' : ''}>Version ${v}${v === latest ? ' (latest)' : ''}</option>`).join('')}</select></div>
+    <div class="row g-4 align-items-start">
+      <div class="col-lg-8 d-flex flex-column gap-4">
+        <div class="card"><div class="card-body p-4">
+          <div class="row g-2 mb-${metrics.length || !isLLM ? 4 : 0}">${facts}</div>
+          ${!isLLM && (info.inputs?.length || info.outputs?.length) ? `<div class="eyebrow mb-2">What it does</div>
+            <p class="mb-4">Takes ${sigLine(info.inputs) || '?'} <i class="bi bi-arrow-right mx-1 text-body-secondary"></i> returns ${sigLine(info.outputs) || '?'}</p>` : ''}
+          ${metrics.length ? `<div class="eyebrow mb-2">Results</div><div class="row g-2 mb-${params.length ? 3 : 0}">${metrics.map(([k, v]) => `<div class="col-6 col-md-4"><div class="fact">
+              <div class="small text-body-secondary text-truncate" title="${h(k)}">${h(k)}</div><div class="v font-monospace">${num(v)}</div></div></div>`).join('')}</div>`
+            : isLLM ? '' : `<div class="eyebrow mb-2">Results</div><p class="small text-body-secondary mb-0">No results logged for this version. Add <code>mlflow.log_metric("accuracy", acc)</code> to your training to compare versions here.</p>`}
+          ${params.length ? `<details class="mt-3"><summary class="small fw-semibold">Training settings (${params.length})</summary>
+              <table class="table table-sm small mb-0 mt-2"><tbody>${params.map(([k, v]) => `<tr><td class="text-body-secondary">${h(k)}</td><td class="font-monospace text-break">${h(v)}</td></tr>`).join('')}</tbody></table></details>` : ''}
+        </div></div>
+        ${isLLM || !libs.length ? '' : `<div class="card"><div class="card-body p-4">
+          <div class="d-flex align-items-center gap-2 mb-2"><div class="eyebrow me-auto">Library check</div>
+            ${drift.length ? '<span class="status bg-warning-subtle text-warning-emphasis">Mismatch</span>' : '<span class="status bg-success-subtle text-success-emphasis">Match</span>'}</div>
+          <p class="small text-body-secondary mb-3">${drift.length ? 'Some libraries differ from the ones used to serve it. It may not load, or may give different answers. Train with the cluster\'s containers to fix this.'
+            : 'Trained with the same library versions used to serve it.'}</p>
+          <div class="d-flex flex-wrap gap-2">${libs.map(l => `<span class="badge rounded-pill ${l.ok ? 'bg-body-secondary text-body-secondary' : 'bg-warning-subtle text-warning-emphasis'} fw-normal"
+              title="trained ${h(l.trained)}, serving ${h(l.serving)}">${h(l.name)} ${h(l.trained)}${l.ok ? '' : ` → ${h(l.serving)}`}</span>`).join('')}</div></div></div>`}
+        <details class="card"><summary class="card-body small fw-semibold">Technical details</summary>
+          <div class="card-body pt-0"><dl class="row small mb-0">
+          ${dd('Served with', isLLM ? 'vLLM (OpenAI-compatible API)' : 'MLflow serving (<code>/invocations</code>)')}
+          ${isLLM ? dd('Folder', `<span class="font-monospace text-break">${h(info.path)}</span>`) : dd('Flavor', h((info.flavors || []).join(', ')))}
+          ${isLLM ? dd('Architecture', h(llm.architecture)) + dd('Precision', h(llm.dtype)) : ''}
           ${isLLM && llm.lora_base ? dd('LoRA adapter', `on <code>${h(llm.lora_base)}</code>${llm.lora_rank ? `, rank ${h(llm.lora_rank)}` : ''}`) : ''}
-          ${dd('Size', bytes(isLLM ? llm.size : info.size))}
-          ${dd('Registered', `${when(info.created)}${run?.user ? ` · by <b>${h(run.user)}</b>` : ''}`)}
+          ${!isLLM && !libs.length ? dd('Library check', info.libs ? 'Not needed: no pinned libraries' : 'Skipped: no <code>requirements.txt</code>') : ''}
+          ${dd('Registered', when(info.created))}
           ${run ? dd('Training run', `${h(run.experiment || 'experiment ' + run.experiment_id)} / ${h(run.name || run.id.slice(0, 8))}${took !== null ? ` · ${took} min` : ''}
-              <a class="ms-2" href="${h(runUrl)}" target="_blank" rel="noopener">Open in MLflow <i class="bi bi-box-arrow-up-right"></i></a>`) : ''}
-        </dl>
-        ${isLLM && !metrics.length ? '' : '<h3 class="h6">Results</h3>'}
-        ${isLLM && !metrics.length ? '' : metrics.length ? `<div class="row g-2 mb-3">${metrics.map(([k, v]) => `<div class="col-6 col-md-4"><div class="border rounded p-2 h-100">
-            <div class="small text-body-secondary text-truncate" title="${h(k)}">${h(k)}</div><div class="fs-5 font-monospace">${num(v)}</div></div></div>`).join('')}</div>`
-          : `<p class="small text-body-secondary">No metrics logged. Use <code>mlflow.log_metric("accuracy", acc)</code> in the training run to compare versions here.</p>`}
-        ${params.length ? `<details class="mb-3"><summary class="small fw-semibold">Training settings (${params.length})</summary>
-            <table class="table table-sm small mb-0 mt-2"><tbody>${params.map(([k, v]) => `<tr><td class="text-body-secondary">${h(k)}</td><td class="font-monospace text-break">${h(v)}</td></tr>`).join('')}</tbody></table></details>` : ''}
-        ${isLLM ? '' : `<h3 class="h6">Libraries</h3>${!libs.length ? `<p class="small text-body-secondary mb-0">Not checked: ${info.libs ? 'none of its libraries are pinned in the serving image' : 'the model has no <code>requirements.txt</code>'}.</p>`
-          : drift.length ? `<div class="alert alert-warning small py-2 mb-2"><i class="bi bi-exclamation-triangle me-1"></i>Trained with different versions than the
-              serving image has: it may fail to load or give different results. Train in the cluster's containers to match.</div>`
-          : `<p class="small text-success mb-2"><i class="bi bi-check-circle me-1"></i>Trained with the same versions the serving image has.</p>`}
-          ${libs.length ? `<div class="d-flex flex-wrap gap-2">${libs.map(l => `<span class="badge rounded-pill ${l.ok ? 'bg-body-secondary text-body border' : 'text-bg-warning'} fw-normal"
-              title="trained ${h(l.trained)}, serving ${h(l.serving)}">${l.ok ? '' : '<i class="bi bi-exclamation-triangle me-1"></i>'}${h(l.name)} ${h(l.trained)}${l.ok ? '' : ` → ${h(l.serving)}`}</span>`).join('')}</div>` : ''}`}
-      </div></div></div>
-      <div class="col-lg-5"><div class="card border-0 shadow-sm"><div class="card-body">
-        <h2 class="h5 mb-3"><i class="bi bi-rocket-takeoff me-2"></i>Deploy as an endpoint</h2>
-        ${running.map(e => `<div class="alert alert-info small py-2"><i class="bi bi-broadcast me-1"></i>Already running as
-            <a href="#/endpoint/${enc(e.name)}" class="alert-link">${h(e.name)}</a> (${h(e.state)}, ${left(e.expires)}).</div>`).join('')}
+              <a class="ms-1" href="${h(runUrl)}" target="_blank" rel="noopener">Open in MLflow <i class="bi bi-box-arrow-up-right"></i></a>`) : ''}
+          </dl></div></details>
+      </div>
+      <div class="col-lg-4 sticky-lg"><div class="card"><div class="card-body p-4">
+        <h2 class="h5 fw-semibold mb-1">Deploy</h2>
+        <p class="small text-body-secondary mb-3">Put this model online. You get a private API and a page to try it.</p>
+        ${running.map(e => `<a class="d-flex align-items-center gap-2 p-2 mb-3 rounded border text-decoration-none text-body list-row" href="#/endpoint/${enc(e.name)}">
+            <i class="bi bi-broadcast text-success"></i><div class="min-w-0 me-auto small"><div class="fw-semibold text-truncate">${h(e.name)}</div>
+            <div class="text-body-secondary">Already online · ${left(e.expires)}</div></div>${stateBadge(e.state)}</a>`).join('')}
         <form id="dep" novalidate>
-          <div class="mb-3"><label class="form-label" for="ep">Endpoint name</label>
+          <div class="mb-3"><label class="form-label small fw-semibold" for="ep">Name</label>
             <input class="form-control" id="ep" value="${h(defName)}" maxlength="42" pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?" required>
-            <div class="form-text">Lowercase letters, digits and dashes.</div></div>
-          <div class="mb-3"><label class="form-label" for="hw">Hardware</label>
-            <select class="form-select" id="hw" ${hw ? '' : 'disabled'}>${hw || '<option>No GPU types found</option>'}</select>
-            <div class="form-text">${isML ? 'Classic ML runs on CPU.' : isLLM ? 'LLMs need a GPU.' : 'PyTorch runs on GPU or CPU.'} ${gpuNote}</div></div>
-          <div class="mb-3"><label class="form-label" for="hours">Run for</label>
-            <div class="input-group"><input class="form-control" id="hours" type="number" min="1" max="${ME.limits.max_hours}" value="${ME.limits.default_hours}">
-              <span class="input-group-text">hours</span></div>
-            <div class="form-text">1 to ${ME.limits.max_hours} hours. The endpoint is a Slurm job: it waits in the queue when GPUs are busy, and stops when its time is up. Longer: ask the admin.</div></div>
-          <div class="d-flex gap-2"><button class="btn btn-primary flex-grow-1" id="go" type="submit"><i class="bi bi-rocket-takeoff me-1"></i>Deploy</button>
-            <button class="btn btn-outline-secondary" id="pre" type="button"><i class="bi bi-code-slash me-1"></i>Preview</button></div>
+            <div class="invalid-feedback">Use lowercase letters, numbers and dashes.</div>
+            <div class="form-text">Lowercase letters, numbers and dashes.</div></div>
+          <div class="mb-3"><label class="form-label small fw-semibold" for="hw">Hardware</label>
+            <select class="form-select" id="hw" ${hw ? '' : 'disabled'}>${hw || '<option>No GPUs available</option>'}</select>
+            <div class="form-text">${isML ? 'Runs on CPU.' : isLLM ? 'Chat models need a GPU.' : 'GPU is faster. CPU works too.'} ${isML ? '' : gpuNote}</div></div>
+          <div class="mb-4"><label class="form-label small fw-semibold" for="hours">Keep it running for</label>
+            <div class="input-group"><input class="form-control" id="hours" type="number" min="1" max="${ME.limits.max_hours}" value="${ME.limits.default_hours}" required>
+              <span class="input-group-text">hours</span>
+              <div class="invalid-feedback">Pick 1 to ${ME.limits.max_hours} hours.</div></div>
+            <div class="form-text">It stops on its own after this (max ${ME.limits.max_hours}). If GPUs are busy, it waits its turn.</div></div>
+          <button class="btn btn-primary w-100" id="go" type="submit"><i class="bi bi-rocket-takeoff me-1"></i>Deploy</button>
+          <button class="btn btn-link btn-sm w-100 mt-1 text-body-secondary text-decoration-none" id="pre" type="button">See what gets created</button>
         </form><div id="out" class="mt-3"></div>
       </div></div></div>
     </div>`;
@@ -167,7 +222,10 @@ async function renderModel(name, version) {
                            hours: +$('#hours').value, ...extra });
   $('#pre').onclick = async () => {
     try { const r = await api('deploy', { method: 'POST', body: body({ preview: true }) });
-          $('#yaml-body').textContent = JSON.stringify(r.manifest, null, 2); bootstrap.Modal.getOrCreateInstance($('#yaml')).show(); }
+          $('#yaml-title').textContent = 'What gets created';
+          $('#yaml-body').innerHTML = `<p class="small text-body-secondary">The Kubernetes objects this deploy makes. For the curious: you don't need to read this.</p>
+            <pre class="code mb-0">${h(JSON.stringify(r.manifest, null, 2))}</pre>`;
+          bootstrap.Modal.getOrCreateInstance($('#yaml')).show(); }
     catch (e) { $('#out').innerHTML = alertBox(e); }
   };
   $('#dep').onsubmit = async ev => {
@@ -175,28 +233,39 @@ async function renderModel(name, version) {
     if (!$('#dep').checkValidity()) { $('#dep').classList.add('was-validated'); return; }
     $('#go').disabled = true; $('#go').innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deploying…';
     try { const r = await api('deploy', { method: 'POST', body: body() });
-          toast(`Deploying ${r.endpoint}`); location.hash = `#/endpoint/${enc(r.endpoint)}`; }
+          toast(`Starting ${r.endpoint}…`); location.hash = `#/endpoint/${enc(r.endpoint)}`; }
     catch (e) { $('#out').innerHTML = alertBox(e); $('#go').disabled = false; $('#go').innerHTML = '<i class="bi bi-rocket-takeoff me-1"></i>Deploy'; }
   };
 }
 
 // ---------- Endpoints ----------
+const modelHref = uri => { const m = /^models:\/(.+)\/(\d+)$/.exec(uri || ''); return m ? `#/model/${enc(m[1])}/${m[2]}` : '#/'; };
+const isShared = s => s && (s.all || s.users.length || s.teams.length);
+// the list's second line: only what the status pill doesn't already say
+const whyLine = e => {
+  const pos = /number (\d+)/.exec(e.why || '')?.[1];
+  const t = e.state === 'queued' ? (pos ? `Number ${pos} in line` : '') : e.state === 'stopped' || e.state === 'ready' ? '' : cap(e.why);
+  return t ? `<div class="small mt-1 ${e.state === 'failed' ? 'text-danger' : 'text-body-secondary'}">${h(t)}</div>` : '';
+};
 async function renderEndpoints() {
-  if (!$('#eps')) app.innerHTML = header('My endpoints', `namespace <code>${h(ME.namespace)}</code> · refreshes every 5 s`,
+  if (!$('#eps')) app.innerHTML = header('My endpoints', 'Models you put online. This page updates by itself.',
       `<a class="btn btn-primary" href="#/"><i class="bi bi-plus-lg me-1"></i>Deploy a model</a>`) + `<div id="eps">${spinner()}</div>`;
   let list;
   try { list = await api('endpoints'); } catch (e) { $('#eps').innerHTML = alertBox(e); return; }
-  $('#eps').innerHTML = list.length ? `<div class="card border-0 shadow-sm"><div class="list-group list-group-flush">${list.map(e => `
-      <div class="list-group-item py-3"><div class="d-flex flex-wrap align-items-center gap-3">
+  $('#eps').innerHTML = list.length ? `<div class="card overflow-hidden"><div class="list-group list-group-flush">${list.map(e => `
+      <div class="list-group-item list-row position-relative py-3 px-3 px-md-4 ${e.state === 'stopped' ? 'opacity-75' : ''}"><div class="d-flex align-items-center gap-3">
         ${kindIcon(e.runtime === 'vllm' ? 'LLM' : '')}
-        <div class="me-auto min-w-0"><div class="d-flex align-items-center gap-2"><a class="fw-semibold text-decoration-none" href="#/endpoint/${enc(e.name)}">${h(e.name)}</a>${stateBadge(e.state)}${shareBadge(e.share)}</div>
-          <div class="small text-body-secondary text-truncate">${h(e.model)} · ${e.runtime === 'vllm' ? 'vLLM' : 'MLflow'} ·
-            <i class="bi bi-${e.gpu ? 'gpu-card' : 'cpu'}"></i> ${e.gpu ? (e.gpu > 1 ? e.gpu + ' GPUs' : 'GPU') : 'CPU'}${e.node ? ' · ' + h(e.node) : ''} · <i class="bi bi-hourglass-split"></i> ${left(e.expires)}</div>
-          ${e.why ? `<div class="small text-${STATE[e.state] === 'danger' ? 'danger' : 'body-secondary'}">${h(e.why)}</div>` : ''}</div>
-        <div class="btn-group"><a class="btn btn-sm btn-outline-primary" href="#/endpoint/${enc(e.name)}"><i class="bi bi-box-arrow-up-right me-1"></i>Open</a>
-          <button class="btn btn-sm btn-outline-danger" data-del="${h(e.name)}" aria-label="Delete ${h(e.name)}"><i class="bi bi-trash"></i></button></div>
+        <div class="me-auto min-w-0">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1"><a class="fw-semibold text-body text-decoration-none stretched-link text-break" href="#/endpoint/${enc(e.name)}">${h(e.name)}</a>
+            ${stateBadge(e.state)}${isShared(e.share) ? `<span class="small text-body-secondary" title="${h(shareText(e.share))}"><i class="bi bi-people me-1"></i>${e.share.all ? 'Everyone' : 'Shared'}</span>` : ''}</div>
+          <div class="meta"><span>${modelLabel(e.model)}</span>${hwLabel(e.gpu)}${e.state === 'stopped' ? '' : timeLeft(e.expires)}</div>
+          ${whyLine(e)}</div>
+        <div class="d-flex align-items-center gap-1 position-relative z-2">
+          ${e.state === 'stopped' ? `<a class="btn btn-sm btn-outline-primary text-nowrap" href="${modelHref(e.model)}">Deploy again</a>` : ''}
+          <button class="btn btn-icon" data-del="${h(e.name)}" title="Delete" aria-label="Delete ${h(e.name)}"><i class="bi bi-trash"></i></button></div>
+        <i class="bi bi-chevron-right text-body-secondary d-none d-md-inline"></i>
       </div></div>`).join('')}</div></div>`
-    : `<div class="card border-0 shadow-sm"><div class="card-body">${empty('hdd-network', 'No endpoints yet.<br><a href="#/">Pick a model and deploy it</a>')}</div></div>`;
+    : `<div class="card">${empty('hdd-network', 'Nothing online yet', 'Pick a model and deploy it. It shows up here.<div class="mt-3"><a class="btn btn-primary" href="#/">Browse models</a></div>')}</div>`;
   app.querySelectorAll('[data-del]').forEach(b => b.onclick = () => del(b.dataset.del));
   renderShared();
   timer = setTimeout(renderEndpoints, 5000);
@@ -205,57 +274,60 @@ async function renderEndpoints() {
 // Other people's endpoints this user may call (the gateway knows; see passenger_wsgi.shared_with_me).
 let sharedAt = 0;
 async function renderShared() {
-  if (!$('#shared')) $('#eps').insertAdjacentHTML('afterend', `<h2 class="h5 mt-5 mb-3"><i class="bi bi-people me-2"></i>Shared with me</h2><div id="shared">${spinner()}</div>`);
-  if (Date.now() - sharedAt < 30000) return;                      // the list changes rarely: every 30 s is plenty
+  if (!$('#shared')) { sharedAt = 0; $('#eps').insertAdjacentHTML('afterend', `<div class="mt-5 mb-3"><h2 class="h5 fw-semibold mb-1">Shared with me</h2>
+      <div class="small text-body-secondary">Endpoints other people let you use, with your own API key.</div></div><div id="shared">${spinner()}</div>`); }
+  if (Date.now() - sharedAt < 10000) return;                      // fresh page: load now; then every 10 s (gateway caches 5 s)
   sharedAt = Date.now();
   let list;
   try { list = await api('shared'); } catch (e) { $('#shared').innerHTML = alertBox(e, 'warning'); return; }
-  $('#shared').innerHTML = list.length ? `<div class="card border-0 shadow-sm"><div class="list-group list-group-flush">${list.map((e, i) => `
-      <div class="list-group-item py-3"><div class="d-flex flex-wrap align-items-center gap-3">
+  $('#shared').innerHTML = list.length ? `<div class="card overflow-hidden"><div class="list-group list-group-flush">${list.map((e, i) => `
+      <div class="list-group-item py-3 px-3 px-md-4"><div class="d-flex flex-wrap align-items-center gap-3">
         ${kindIcon(e.runtime === 'vllm' ? 'LLM' : '')}
-        <div class="me-auto min-w-0"><div class="d-flex align-items-center gap-2"><span class="fw-semibold">${h(e.name)}</span>
-            <span class="small text-body-secondary">by ${h(e.owner)}</span>${stateBadge(e.ready ? 'ready' : 'stopped')}</div>
-          <div class="small text-body-secondary text-truncate">${h(e.model || '')}${e.expires ? ' · <i class="bi bi-hourglass-split"></i> ' + left(e.expires) : ''}</div>
-          <div class="small mt-1"><code class="text-break" id="sh-url-${i}">${h(e.url)}</code>
-            <button class="btn btn-sm btn-link p-0 ms-1" data-copy="sh-url-${i}" aria-label="Copy URL"><i class="bi bi-clipboard"></i></button></div></div>
-        <button class="btn btn-sm btn-outline-primary" data-ex="${i}"><i class="bi bi-code-slash me-1"></i>How to call</button>
+        <div class="me-auto min-w-0">
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-1"><span class="fw-semibold text-break">${h(e.name)}</span>${stateBadge(e.ready ? 'ready' : 'stopped')}</div>
+          <div class="meta"><span><i class="bi bi-person"></i>From ${h(e.owner)}</span>${e.model ? `<span>${modelLabel(e.model)}</span>` : ''}${e.ready ? timeLeft(e.expires) : ''}</div></div>
+        <button class="btn btn-sm btn-primary" data-ex="${i}" ${e.ready ? '' : 'disabled'}><i class="bi bi-code-slash me-1"></i>How to use</button>
       </div></div>`).join('')}</div></div>`
-    : `<div class="card border-0 shadow-sm"><div class="card-body small text-body-secondary">Nothing shared with you yet. When someone shares an endpoint with you (or your team), it shows up here.</div></div>`;
-  $('#shared').querySelectorAll('[data-copy]').forEach(b => b.onclick = () => copy($('#' + b.dataset.copy).textContent));
-  $('#shared').querySelectorAll('[data-ex]').forEach(b => b.onclick = () => {
-    const e = list[+b.dataset.ex], ca = ME.gateway?.ca ? '--cacert gateway-ca.crt ' : '';
-    const body = e.runtime === 'vllm' ? `{"model":"${e.name}","messages":[{"role":"user","content":"Hello!"}]}` : '{"inputs": [[0]]}';
-    $('#yaml-title').textContent = `Call ${e.owner}/${e.name}`;
-    $('#yaml-body').textContent = `# with YOUR key (Model Hub -> API key), never the owner's\nexport MH_KEY='mh~${ME.user}~...'\n\n` +
-      `curl ${ca}${e.url} \\\n  -H "Authorization: Bearer $MH_KEY" \\\n  -H 'Content-Type: application/json' \\\n  -d '${body}'` +
-      (e.runtime === 'vllm' ? `\n\n# OpenAI client: base_url="${e.url.replace(/\/chat\/completions$/, '')}", api_key=os.environ["MH_KEY"], model="${e.name}"` : '\n\n# the request format is the owner\'s model\'s: ask them, or look at its MLflow signature');
-    bootstrap.Modal.getOrCreateInstance($('#yaml')).show();
-  });
+    : `<div class="card"><div class="card-body small text-body-secondary px-4">Nothing yet. When someone shares an endpoint with you or your team, it shows up here.</div></div>`;
+  $('#shared').querySelectorAll('[data-ex]').forEach(b => b.onclick = () => howToCall(list[+b.dataset.ex]));
+}
+// a shared endpoint: same 3 steps as your own (your key, the one certificate, a request)
+function howToCall(e) {
+  const llm = e.runtime === 'vllm', ca = ME.gateway?.ca ? '--cacert gateway-ca.crt ' : '';
+  const body = llm ? `{"model":"${e.name}","messages":[{"role":"user","content":"Hello!"}]}` : '{"inputs": [[0]]}';
+  const curl = `export MH_KEY='mh~${ME.user}~…'   # your key\n\ncurl ${ca}${e.url} \\\n  -H "Authorization: Bearer $MH_KEY" \\\n  -H 'Content-Type: application/json' \\\n  -d '${body}'`;
+  const py = llm ? `from openai import OpenAI          # pip install openai
+import os, httpx
+client = OpenAI(base_url="${e.url.replace(/\/chat\/completions$/, '')}", api_key=os.environ["MH_KEY"]${ME.gateway?.ca ? ',\n                http_client=httpx.Client(verify="gateway-ca.crt")' : ''})
+r = client.chat.completions.create(model="${e.name}", messages=[{"role": "user", "content": "Hello"}])
+print(r.choices[0].message.content)` : '';
+  $('#yaml-title').textContent = `Use ${e.name}`;
+  $('#yaml-body').innerHTML = `<p class="small text-body-secondary mb-4"><i class="bi bi-person me-1"></i>Shared by <b>${h(e.owner)}</b>. It runs on their GPU,
+      so it stops when their time runs out.${llm ? '' : ' The input format depends on their model: ask them for an example.'}</p>${callSteps(curl, py)}`;
+  wireCopies($('#yaml-body'));
+  bootstrap.Modal.getOrCreateInstance($('#yaml')).show();
 }
 const shareText = s => s.all ? 'Shared with everyone' : 'Shared with ' +
   [...s.users, ...s.teams.map(t => `team ${t}`)].join(', ');
-const shareBadge = s => s && (s.all || s.users.length || s.teams.length)
-  ? `<span class="badge rounded-pill text-bg-light border" title="${h(shareText(s))}"><i class="bi bi-people me-1"></i>${s.all ? 'everyone' : 'shared'}</span>` : '';
 async function shareDialog(ep) {
   const s = ep.share || { users: [], teams: [], all: false };
   let teams = [];
   try { teams = await api('teams'); } catch (e) { /* no LDAP from here: people still work */ }
   const mode = s.all ? 'all' : (s.users.length || s.teams.length) ? 'some' : 'me';
-  const url = `${ME.gateway?.url || ''}/${ME.user}/${ep.name}${ep.path}`;
   $('#share-title').textContent = `Share ${ep.name}`;
-  $('#share-body').innerHTML = `
-    ${[['me', 'Only me'], ['some', 'Chosen people and teams'], ['all', 'Everyone with a cluster account']].map(([v, t]) => `
-      <div class="form-check"><input class="form-check-input" type="radio" name="smode" id="sm-${v}" value="${v}" ${mode === v ? 'checked' : ''}>
-        <label class="form-check-label" for="sm-${v}">${t}</label></div>`).join('')}
-    <div id="some" class="mt-3 ps-4">
-      <label class="form-label small" for="susers">People (user names, comma separated)</label>
-      <input class="form-control form-control-sm mb-2" id="susers" value="${h(s.users.join(', '))}" placeholder="bob, carol">
-      <div class="small mb-1">Teams</div>
+  $('#share-body').innerHTML = `<p class="small text-body-secondary">Who can use this endpoint?</p>
+    <div class="list-group mb-3">${[['me', 'Only me', 'lock'], ['some', 'Specific people or teams', 'people'], ['all', 'Everyone on the cluster', 'globe2']].map(([v, t, i]) => `
+      <label class="list-group-item d-flex align-items-center gap-2"><input class="form-check-input mt-0" type="radio" name="smode" value="${v}" ${mode === v ? 'checked' : ''}>
+        <i class="bi bi-${i} text-body-secondary"></i>${t}</label>`).join('')}</div>
+    <div id="some" class="mb-3">
+      <label class="form-label small fw-semibold" for="susers">People</label>
+      <input class="form-control mb-1" id="susers" value="${h(s.users.join(', '))}" placeholder="e.g. bob, carol">
+      <div class="form-text mb-3">Their cluster user names, separated by commas.</div>
+      <div class="small fw-semibold mb-1">Teams</div>
       ${teams.length ? teams.map(t => `<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" id="st-${h(t)}" value="${h(t)}" ${s.teams.includes(t) ? 'checked' : ''}>
           <label class="form-check-label small" for="st-${h(t)}">${h(t)}</label></div>`).join('')
-        : '<div class="small text-body-secondary">No teams yet (the admin makes them).</div>'}</div>
-    <div class="small text-body-secondary mt-3">They call it with <b>their own</b> API key at<br><code class="text-break">${h(url)}</code>
-      <br>It runs on your GPU and your time; changes take effect within a minute.</div>
+        : '<div class="small text-body-secondary">No teams yet. Your admin can create them.</div>'}</div>
+    <div class="small text-body-secondary"><i class="bi bi-info-circle me-1"></i>They use their own API key. It runs on your GPU and your time. Changes apply within a minute.</div>
     <div id="share-err" class="mt-2"></div>`;
   const sync = () => $('#some').classList.toggle('d-none', $('input[name=smode]:checked').value !== 'some');
   $('#share-body').querySelectorAll('input[name=smode]').forEach(r => r.onchange = sync); sync();
@@ -265,13 +337,14 @@ async function shareDialog(ep) {
     const body = v === 'all' ? { all: true, users: [], teams: [] } : v === 'me' ? { all: false, users: [], teams: [] }
       : { all: false, users: $('#susers').value.split(',').map(x => x.trim()).filter(Boolean),
           teams: [...$('#share-body').querySelectorAll('input[type=checkbox]:checked')].map(c => c.value) };
-    try { await api(`endpoints/${enc(ep.name)}/share`, { method: 'POST', body }); m.hide(); toast('Sharing saved'); route(); }
+    try { await api(`endpoints/${enc(ep.name)}/share`, { method: 'POST', body }); m.hide(); toast('Sharing updated'); route(); }
     catch (e) { $('#share-err').innerHTML = alertBox(e); }
   };
   m.show();
 }
 function del(name) {
-  $('#confirm-body').innerHTML = `Delete <b>${h(name)}</b>? It stops answering, and its GPU/CPU go back to the cluster.`;
+  $('#confirm-body').innerHTML = `<b>${h(name)}</b> stops right away, and anyone using it loses access. Its GPU or CPU is freed for others.
+    <div class="small text-body-secondary mt-2">The model itself is not deleted. You can deploy it again later.</div>`;
   const m = bootstrap.Modal.getOrCreateInstance($('#confirm'));
   $('#confirm-ok').onclick = async () => {
     m.hide();
@@ -284,26 +357,37 @@ function del(name) {
 
 // ---------- One endpoint: playground, API, logs ----------
 const cards = {};      // model card per models:/ URI (a version never changes)
+// what's going on, in one sentence, when it isn't ready
+function stateBanner(ep) {
+  const box = (kind, icon, title, text, extra = '') => `<div class="alert alert-${kind} d-flex gap-3 align-items-start mb-4" role="status">
+      <i class="bi bi-${icon} fs-5"></i><div class="me-auto"><div class="fw-semibold">${title}</div><div class="small">${text}</div></div>${extra}</div>`;
+  const pos = /number (\d+)/.exec(ep.why || '')?.[1];
+  if (ep.state === 'queued') return box('warning', 'hourglass-split', ep.gpu ? 'Waiting for a free GPU' : 'Waiting for a free node',
+    `${pos ? `You're number ${pos} in line. ` : ''}It starts by itself, so you can leave this page.`);
+  if (ep.state === 'loading' || ep.state === 'starting') return box('info', 'arrow-repeat', 'Starting up', `${h(cap(ep.why || 'loading the model'))}. Big models can take a few minutes.`);
+  if (ep.state === 'failed') return box('danger', 'exclamation-octagon', 'It couldn\'t start', `${h(ep.why)}. The <b>Logs</b> tab shows what went wrong.`);
+  if (ep.state === 'stopped') return box('secondary', 'stop-circle', 'This endpoint has stopped', 'Its time ran out, or it was stopped. Deploy the model again to use it.',
+    `<a class="btn btn-sm btn-primary text-nowrap" href="${modelHref(ep.model)}">Deploy again</a>`);
+  return '';
+}
 async function renderEndpoint(name, tab = 'play') {
   if (!$('#tab')) app.innerHTML = spinner();
   let ep;
   try { ep = (await api('endpoints')).find(e => e.name === name); } catch (e) { app.innerHTML = alertBox(e); return; }
-  if (!ep) { app.innerHTML = alertBox(`No endpoint called ${name}.`) + '<a href="#/endpoints">Back to endpoints</a>'; return; }
+  if (!ep) { app.innerHTML = back('#/endpoints', 'My endpoints') + `<div class="card">${empty('question-circle', `No endpoint called ${h(name)}`, 'It may have been deleted.')}</div>`; return; }
   const m = /^models:\/([^/]+)\/(\d+)$/.exec(ep.model || '');
   const info = m ? (cards[ep.model] ??= await api(`models/${enc(m[1])}/${m[2]}`).catch(() => null)) : null;
   const waiting = ep.state !== 'ready';
-  app.innerHTML = `<nav aria-label="breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="#/endpoints">Endpoints</a></li>
-      <li class="breadcrumb-item active" aria-current="page">${h(name)}</li></ol></nav>
-    <div class="d-flex flex-wrap align-items-center gap-3 mb-3">${kindIcon(ep.runtime === 'vllm' ? 'LLM' : '')}
-      <div class="me-auto"><div class="d-flex align-items-center gap-2"><h1 class="h3 mb-0">${h(name)}</h1>${stateBadge(ep.state)}</div>
-        <div class="small text-body-secondary">${h(ep.model)} · ${ep.gpu ? (ep.gpu > 1 ? ep.gpu + ' GPUs' : 'GPU') : 'CPU'}${ep.node ? ' on ' + h(ep.node) : ''} · ${left(ep.expires)}</div></div>
-      <div class="d-flex gap-2"><button class="btn btn-outline-primary" id="shr"><i class="bi bi-people me-1"></i>Share</button>
-        <button class="btn btn-outline-danger" id="del"><i class="bi bi-trash me-1"></i>Delete</button></div></div>
-    ${ep.share && (ep.share.all || ep.share.users.length || ep.share.teams.length) ? `<div class="small text-body-secondary mb-3"><i class="bi bi-people me-1"></i>${shareText(ep.share)}</div>` : ''}
-    ${waiting ? (ep.state === 'failed' ? alertBox(`Failed: ${ep.why}. Check the Logs tab.`)
-       : alertBox(`${ep.state[0].toUpperCase() + ep.state.slice(1)}${ep.why ? ': ' + ep.why : ''}. This page refreshes by itself.`, 'warning', 'hourglass-split')) : ''}
-    <ul class="nav nav-tabs mb-3">${[['play', 'Playground', 'play-circle'], ['api', 'API', 'code-square'], ['logs', 'Logs', 'terminal']].map(([k, t, i]) =>
-      `<li class="nav-item"><button class="nav-link ${tab === k ? 'active' : ''}" data-tab="${k}"><i class="bi bi-${i} me-1"></i>${t}</button></li>`).join('')}</ul>
+  app.innerHTML = `${back('#/endpoints', 'My endpoints')}
+    <div class="d-flex flex-wrap align-items-center gap-3 mb-4">${kindIcon(ep.runtime === 'vllm' ? 'LLM' : '')}
+      <div class="me-auto min-w-0"><div class="d-flex flex-wrap align-items-center gap-2 mb-1"><h1 class="h3 fw-semibold mb-0 text-break">${h(name)}</h1>${stateBadge(ep.state)}</div>
+        <div class="meta"><a class="text-body-secondary text-decoration-none" href="${modelHref(ep.model)}" title="Open the model">${modelLabel(ep.model)}</a>${hwLabel(ep.gpu)}${ep.state === 'stopped' ? '' : timeLeft(ep.expires)}
+          ${isShared(ep.share) ? `<span><i class="bi bi-people"></i>${h(shareText(ep.share))}</span>` : ''}</div></div>
+      <div class="d-flex gap-2"><button class="btn btn-outline-secondary" id="shr"><i class="bi bi-people me-1"></i>Share</button>
+        <button class="btn btn-outline-danger" id="del" aria-label="Delete endpoint" title="Delete"><i class="bi bi-trash"></i></button></div></div>
+    ${stateBanner(ep)}
+    <ul class="nav nav-underline mb-4 border-bottom">${[['play', 'Try it'], ['api', 'Use the API'], ['logs', 'Logs']].map(([k, t]) =>
+      `<li class="nav-item"><button class="nav-link ${tab === k ? 'active' : ''}" data-tab="${k}">${t}</button></li>`).join('')}</ul>
     <div id="tab"></div>`;
   $('#del').onclick = () => del(name);
   $('#shr').onclick = () => shareDialog(ep);
@@ -372,7 +456,7 @@ function renderOutput(r) {
     const p = probs ? row : ex.map(x => x / z);
     const top = p.map((v, i) => [i, v]).sort((a, b) => b[1] - a[1]).slice(0, 5);
     bars = `<div class="mb-3"><div class="d-flex align-items-baseline gap-2 mb-2"><span class="display-6">${top[0][0]}</span>
-        <span class="text-body-secondary small">predicted class · ${(top[0][1] * 100).toFixed(1)}%${probs ? '' : ' (softmax of the outputs)'}</span></div>
+        <span class="text-body-secondary small">top class · ${(top[0][1] * 100).toFixed(1)}% sure${probs ? '' : ' (softmax of the outputs)'}</span></div>
       ${top.map(([i, v]) => `<div class="d-flex align-items-center gap-2 small mb-1"><span class="font-monospace" style="width:3rem">${i}</span>
         <div class="progress flex-grow-1" role="progressbar" aria-label="class ${i}" aria-valuenow="${(v * 100).toFixed(0)}" aria-valuemin="0" aria-valuemax="100" style="height:.75rem">
           <div class="progress-bar" style="width:${(v * 100).toFixed(1)}%"></div></div>
@@ -386,20 +470,21 @@ function playground(ep, info) {
   const t = $('#tab'), off = ep.state !== 'ready' ? 'disabled' : '';
   if (ep.runtime === 'vllm') {
     const msgs = [];
-    t.innerHTML = `<div class="row g-4"><div class="col-lg-8"><div class="card border-0 shadow-sm"><div class="card-body">
-        <div class="chat mb-3" id="log"><div class="text-body-secondary text-center my-auto small" id="hint">Say something to ${h(ep.name)}.</div></div>
-        <form class="input-group" id="chatf"><input class="form-control" id="say" placeholder="Message" autocomplete="off" ${off}>
+    t.innerHTML = `<div class="row g-4"><div class="col-lg-8"><div class="card"><div class="card-body">
+        <div class="chat mb-3" id="log"><div class="text-body-secondary text-center my-auto small" id="hint"><i class="bi bi-chat-dots fs-3 d-block mb-2 opacity-50"></i>Send a message to start chatting.</div></div>
+        <form class="input-group" id="chatf"><input class="form-control" id="say" placeholder="${off ? 'Available when the endpoint is ready' : 'Type a message…'}" autocomplete="off" aria-label="Message" ${off}>
           <button class="btn btn-primary" id="send" ${off}><i class="bi bi-send"></i></button></form></div></div></div>
-      <div class="col-lg-4"><div class="card border-0 shadow-sm"><div class="card-body">
-        <h2 class="h6 mb-3">Settings</h2>
-        <label class="form-label small" for="mt">Max tokens</label><input class="form-control mb-3" id="mt" type="number" value="512" min="1">
-        <label class="form-label small d-flex" for="temp">Temperature <span class="ms-auto" id="tv">0.7</span></label>
+      <div class="col-lg-4"><div class="card"><div class="card-body">
+        <div class="eyebrow mb-3">Settings</div>
+        <label class="form-label small" for="mt">Max answer length <span class="text-body-secondary">(tokens)</span></label><input class="form-control mb-3" id="mt" type="number" value="512" min="1">
+        <label class="form-label small d-flex" for="temp">Creativity <span class="text-body-secondary ms-1">(temperature)</span><span class="ms-auto" id="tv">0.7</span></label>
         <input class="form-range" id="temp" type="range" min="0" max="2" step="0.1" value="0.7">
-        <button class="btn btn-sm btn-outline-secondary w-100 mt-3" id="clear" type="button"><i class="bi bi-eraser me-1"></i>Clear chat</button>
+        <div class="d-flex small text-body-secondary"><span>Focused</span><span class="ms-auto">Creative</span></div>
+        <button class="btn btn-sm btn-outline-secondary w-100 mt-3" id="clear" type="button"><i class="bi bi-eraser me-1"></i>New chat</button>
       </div></div></div></div>`;
     $('#temp').oninput = () => { $('#tv').textContent = $('#temp').value; };
     const draw = () => { $('#log').innerHTML = msgs.map(m => `<div class="bubble ${m.role}">${h(m.content)}</div>`).join('')
-                                             || '<div class="text-body-secondary text-center my-auto small">Say something.</div>'; $('#log').scrollTop = 1e9; };
+                                             || '<div class="text-body-secondary text-center my-auto small"><i class="bi bi-chat-dots fs-3 d-block mb-2 opacity-50"></i>Send a message to start chatting.</div>'; $('#log').scrollTop = 1e9; };
     $('#clear').onclick = () => { msgs.length = 0; draw(); };
     $('#chatf').onsubmit = async ev => {
       ev.preventDefault();
@@ -425,30 +510,30 @@ function playground(ep, info) {
   const image = L ? `<div class="d-flex flex-wrap gap-2 mb-2">
         <label class="btn btn-sm btn-outline-primary mb-0"><i class="bi bi-upload me-1"></i>Upload image<input type="file" accept="image/*" id="file" hidden></label>
         <button class="btn btn-sm btn-outline-secondary" id="clr" type="button"><i class="bi bi-eraser me-1"></i>Clear</button>
-        <span class="small text-body-secondary align-self-center">or draw below</span></div>
+        <span class="small text-body-secondary align-self-center">or draw one below</span></div>
       <div class="row g-3 align-items-start">
         <div class="col-auto"><canvas id="pad" width="280" height="280" class="draw-pad rounded border" aria-label="Drawing area"></canvas></div>
         <div class="col small" style="min-width:11rem">
-          <div class="text-body-secondary mb-1">Model gets</div>
+          <div class="text-body-secondary mb-1">What the model sees</div>
           <canvas id="prev" width="${L.w}" height="${L.h}" class="pixelated border rounded mb-2" style="width:84px;height:84px"></canvas>
           <div class="font-monospace mb-3">${L.c === 1 ? 'grey' : 'RGB'} ${L.h}×${L.w} · ${L.order === 'flat' ? 'flattened' : L.order.toUpperCase()}</div>
           <label class="form-label mb-1" for="scale">Pixel values</label>
           <select class="form-select form-select-sm mb-2" id="scale"><option value="01">0 – 1</option><option value="255">0 – 255</option>
             ${L.c === 3 ? '<option value="imagenet">ImageNet mean/std</option>' : ''}</select>
           <div class="form-check"><input class="form-check-input" type="checkbox" id="inv"><label class="form-check-label" for="inv">Invert colours</label></div>
-          <div class="form-text">MNIST-style models want a white digit on black: drawing does that; for a dark digit on white paper, tick Invert.</div>
+          <div class="form-text">Drawing makes white on black, like MNIST. If your image is dark on white, turn on Invert.</div>
         </div></div>` : '';
   const modes = [image && ['image', 'Image'], form && ['form', 'Form'], ['json', 'JSON']].filter(Boolean);
-  t.innerHTML = `<div class="row g-4"><div class="col-lg-7"><div class="card border-0 shadow-sm h-100"><div class="card-body">
-      <div class="d-flex align-items-center mb-3"><h2 class="h6 mb-0 me-auto">Input</h2>
+  t.innerHTML = `<div class="row g-4"><div class="col-lg-7"><div class="card h-100"><div class="card-body">
+      <div class="d-flex align-items-center mb-3"><div class="eyebrow me-auto">Input</div>
         ${modes.length > 1 ? `<div class="btn-group btn-group-sm" role="group" aria-label="Input mode">${modes.map(([v, l], i) =>
           `<input type="radio" class="btn-check" name="mode" id="m-${v}" value="${v}" ${i ? '' : 'checked'}><label class="btn btn-outline-secondary" for="m-${v}">${l}</label>`).join('')}</div>` : ''}</div>
       <div data-box="image" ${modes[0][0] === 'image' ? '' : 'hidden'}>${image}</div>
       <div data-box="form" ${modes[0][0] === 'form' ? '' : 'hidden'}>${form}</div>
       <div data-box="json" ${modes[0][0] === 'json' ? '' : 'hidden'}><textarea class="form-control font-monospace small" id="json" rows="12">${h(JSON.stringify(exampleBody(ep, info), null, 2))}</textarea></div>
-      <button class="btn btn-primary mt-3" id="run" ${off}><i class="bi bi-play-fill me-1"></i>Predict</button></div></div></div>
-    <div class="col-lg-5"><div class="card border-0 shadow-sm h-100"><div class="card-body"><h2 class="h6 mb-3">Output</h2>
-      <div id="res" class="text-body-secondary small">Press Predict.</div></div></div></div></div>`;
+      <button class="btn btn-primary mt-3" id="run" ${off}><i class="bi bi-play-fill me-1"></i>Run</button></div></div></div>
+    <div class="col-lg-5"><div class="card h-100"><div class="card-body"><div class="eyebrow mb-3">Result</div>
+      <div id="res" class="text-body-secondary small">Fill in the input and press <b>Run</b>.</div></div></div></div></div>`;
   let mode = modes[0][0];
   app.querySelectorAll('[name="mode"]').forEach(r => r.onchange = () => {
     mode = r.value; app.querySelectorAll('[data-box]').forEach(b => { b.hidden = b.dataset.box !== mode; });
@@ -488,7 +573,7 @@ function playground(ep, info) {
               const el = app.querySelector(`[data-col="${CSS.escape(c.name)}"]`);
               return num(c) ? +el.value : c.type === 'boolean' ? el.value === 'true' : el.value; })] } };
       else body = JSON.parse($('#json').value);
-    } catch (e) { $('#res').innerHTML = alertBox('Invalid JSON: ' + e.message); return; }
+    } catch (e) { $('#res').innerHTML = alertBox('That isn\'t valid JSON: ' + e.message); return; }
     $('#run').disabled = true; $('#res').innerHTML = '<div class="spinner-border spinner-border-sm text-primary"></div>';
     try { $('#res').innerHTML = renderOutput(await api(`endpoints/${enc(ep.name)}/predict`, { method: 'POST', body })); }
     catch (e) { $('#res').innerHTML = alertBox(e); }
@@ -497,20 +582,16 @@ function playground(ep, info) {
 }
 
 // Everything an app (Flask, FastAPI, Streamlit, Gradio, a notebook, a script…) needs to call this endpoint, + one curl.
-// From anywhere: the gateway + the user's personal key. Inside the cluster also: the endpoint's ClusterIP.
+// Through the gateway with the user's personal key, from anywhere (laptop or cluster): the only way in.
 function apiTab(ep, info) {
-  const llm = ep.runtime === 'vllm', ip = ep.ip || '<cluster-ip>';
-  const base = `http://${ip}:8080`, url = base + ep.path;
+  const llm = ep.runtime === 'vllm';
   const body = JSON.stringify(exampleBody(ep, info));
   const big = body.length > 300;                 // e.g. an image tensor: a file beats 784 numbers on the command line
   const shape = c => c['tensor-spec'] ? `${c['tensor-spec'].dtype} ${JSON.stringify(c['tensor-spec'].shape)}` : c.type;
   const cols = list => (list || []).map(c => `<code>${h(c.name || '(tensor)')}</code> ${h(shape(c))}`).join('<br>') || '<span class="text-body-secondary">not in the model signature</span>';
   const tensor = (info?.inputs || []).some(c => c['tensor-spec']);
-  const row = (k, v) => `<tr><th class="text-nowrap fw-semibold pe-4" style="width:1%">${k}</th><td>${v}</td></tr>`;
   const copyable = (id, v) => `<span class="d-inline-flex align-items-center gap-2"><code id="${id}" class="text-break">${h(v)}</code>
       <button class="btn btn-sm btn-link p-0" data-copy="${id}" aria-label="Copy"><i class="bi bi-clipboard"></i></button></span>`;
-  const table = rows => `<table class="table table-sm align-middle small mb-3"><tbody>${rows.filter(Boolean).join('')}</tbody></table>`;
-  const curl = `curl ${url} \\\n  -H 'Content-Type: application/json' \\\n${llm ? '  -H "Authorization: Bearer $KEY" \\\n' : ''}  -d ${big ? '@input.json' : `'${body}'`}`;
   const gw = ME.gateway?.url, gbase = `${gw}/${ME.user}/${ep.name}`, gurl = gbase + ep.path;
   const ca = ME.gateway?.ca ? '--cacert gateway-ca.crt ' : '';
   const gcurl = `curl ${ca}${gurl} \\\n  -H "Authorization: Bearer $MH_KEY" \\\n  -H 'Content-Type: application/json' \\\n  -d ${big ? '@input.json' : `'${body}'`}`;
@@ -523,62 +604,40 @@ print(r.choices[0].message.content)`
 r = requests.post("${gurl}", json=${big ? 'json.load(open("input.json"))' : body},
                   headers={"Authorization": "Bearer " + os.environ["MH_KEY"]}${ME.gateway?.ca ? ', verify="gateway-ca.crt"' : ''})
 print(r.json())`;
-  $('#tab').innerHTML = `<div class="card border-0 shadow-sm"><div class="card-body">
-      <p class="text-body-secondary small">A plain HTTP JSON API: use it from any app or tool (Flask, FastAPI, Streamlit, Gradio, a notebook, a script).</p>
-      ${gw ? `<h2 class="h6"><i class="bi bi-globe2 me-1"></i>From anywhere: your laptop or the cluster</h2>
-      <p class="small text-body-secondary mb-2">Through the gateway, with your personal API key (<a href="#/key">My API key</a>).
-        Put it in an environment variable: <code>export MH_KEY=mh~…</code>. Only you, and whoever you <b>Share</b> it with (each with their own key), can call it.</p>
-      ${table([
-        row('URL', copyable('g-url', gurl)),
-        llm && row('Base URL', `${copyable('g-base', gbase + '/v1')} <span class="text-body-secondary">for OpenAI client libraries (api_key = your key, model = <code>${h(ep.name)}</code>)</span>`),
-        row('Header', '<code>Authorization: Bearer $MH_KEY</code>'),
-        ME.gateway?.ca && row('Certificate', 'Self-signed: download <a href="api/gateway-ca" download="gateway-ca.crt"><i class="bi bi-download me-1"></i>gateway-ca.crt</a> once and pass it as shown (or your browser/OS can trust it).'),
-      ])}
-      ${codeBlock('g-curl', gcurl, 'Example (curl)')}
-      ${codeBlock('g-py', gpy, 'Example (Python)')}` : ''}
-
-      <h2 class="h6 mt-4"><i class="bi bi-hdd-network me-1"></i>Directly, inside the cluster</h2>
-      <p class="small text-body-secondary mb-2">Jobs, VS Code sessions and apps on the cluster can also call the endpoint's own address (changes when it is redeployed).</p>
-      ${table([
-        row('URL', copyable('a-url', url)),
-        llm && row('Base URL', `${copyable('a-base', base + '/v1')} <span class="text-body-secondary">for OpenAI client libraries</span>`),
-        llm && row('API key', `<div class="input-group input-group-sm" style="max-width:32rem"><input class="form-control font-monospace" id="keyval" type="password" placeholder="hidden" readonly>
-            <button class="btn btn-outline-secondary" id="key"><i class="bi bi-eye me-1"></i>Show</button>
-            <button class="btn btn-outline-secondary" id="keycopy" aria-label="Copy key"><i class="bi bi-clipboard"></i></button></div>
-            <div class="text-body-secondary mt-1">Header <code>Authorization: Bearer &lt;key&gt;</code>. Keep it private: put it in an environment variable, not in your code.</div>`),
-        llm && row('Model name', copyable('a-model', ep.name)),
-        row('Method', 'POST, header <code>Content-Type: application/json</code>'),
-        llm ? row('Request body', `OpenAI chat format: <code>{"model": "${h(ep.name)}", "messages": [{"role": "user", "content": "…"}], "max_tokens": 256}</code>`)
-            : row('Request body', (tensor ? '<code>{"inputs": [ … ]}</code>: a list of inputs, each in the input shape below (without the first -1)'
-            : '<code>{"dataframe_split": {"columns": [...], "data": [[...], ...]}}</code> or <code>{"dataframe_records": [{"col": value, ...}]}</code>')
-            + (big ? '<br><a href="#" id="dl"><i class="bi bi-download me-1"></i>Download an example input.json</a>' : '')),
-        !llm && row('Inputs', cols(info?.inputs)),
-        !llm && row('Outputs', cols(info?.outputs)),
-        row('Response', llm ? 'OpenAI chat completion: the answer is in <code>choices[0].message.content</code>'
-            : '<code>{"predictions": [...]}</code>, one entry per input'),
-        row('Health check', `<code>GET ${h(base)}${llm ? '/health' : '/ping'}</code>: 200 when ready`),
-      ])}
-      ${codeBlock('c-curl', curl, 'Example (curl)')}</div></div>`;
+  const info2 = (k, v) => `<div class="mb-3"><div class="small text-body-secondary mb-1">${k}</div><div class="small">${v}</div></div>`;
+  $('#tab').innerHTML = `<div class="row g-4 align-items-start">
+    <div class="col-lg-8"><div class="card"><div class="card-body p-4">
+      <h2 class="h5 fw-semibold mb-1">Call it from your app</h2>
+      <p class="small text-body-secondary mb-4">It's a normal web API. Call it from your laptop or the cluster, in any language or tool.
+        Only you and the people you <b>share</b> it with can use it.</p>
+      ${gw ? callSteps(`export MH_KEY='mh~${ME.user}~…'   # your key\n\n${gcurl}`, gpy) : alertBox('The gateway is not set up yet, so this endpoint can\'t be called from outside Model Hub. Ask your admin.', 'warning')}
+    </div></div></div>
+    <div class="col-lg-4"><div class="card"><div class="card-body p-4">
+      <div class="eyebrow mb-3">Details</div>
+      ${gw ? info2('URL', copyable('g-url', gurl)) : ''}
+      ${gw && llm ? info2('Base URL <span class="text-body-secondary">(OpenAI libraries)</span>', copyable('g-base', gbase + '/v1')) : ''}
+      ${llm ? info2('Model name', copyable('g-model', ep.name)) : ''}
+      ${info2('Send', llm ? 'OpenAI chat format: <code>messages</code>, plus <code>max_tokens</code> if you like'
+          : (tensor ? '<code>{"inputs": [ … ]}</code>, one item per input' : '<code>{"dataframe_split": …}</code> or <code>{"dataframe_records": …}</code>')
+          + (big ? '<div class="mt-1"><a href="#" id="dl"><i class="bi bi-download me-1"></i>Example input.json</a></div>' : ''))}
+      ${!llm ? info2('Inputs', cols(info?.inputs)) + info2('Outputs', cols(info?.outputs)) : ''}
+      ${info2('You get back', llm ? 'The answer is in <code>choices[0].message.content</code>' : '<code>{"predictions": [...]}</code>, one per input')}
+    </div></div></div></div>`;
   wireCopies();
   if (big) $('#dl').onclick = e => {
     e.preventDefault();
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([body], { type: 'application/json' })), download: 'input.json' });
     a.click(); URL.revokeObjectURL(a.href);
   };
-  if (llm) {
-    const load = async () => $('#keyval').value || ($('#keyval').value = (await api(`endpoints/${enc(ep.name)}/key`)).key);
-    $('#key').onclick = async () => { try { await load(); $('#keyval').type = $('#keyval').type === 'password' ? 'text' : 'password'; } catch (e) { toast(e.message); } };
-    $('#keycopy').onclick = async () => { try { copy(await load()); } catch (e) { toast(e.message); } };
-  }
 }
 
 async function logsTab(ep) {
-  $('#tab').innerHTML = `<div class="card border-0 shadow-sm"><div class="card-body">
-      <div class="d-flex align-items-center mb-2"><h2 class="h6 mb-0 me-auto">Last 300 lines</h2>
+  $('#tab').innerHTML = `<div class="card"><div class="card-body">
+      <div class="d-flex align-items-center mb-2"><div class="me-auto"><div class="fw-semibold">Logs</div><div class="small text-body-secondary">The last 300 lines. Useful when it won't start.</div></div>
         <button class="btn btn-sm btn-outline-secondary" id="rl"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button></div>
       <pre class="code mb-0" id="lg">…</pre></div></div>`;
   const load = async () => {
-    try { $('#lg').textContent = (await api(`endpoints/${enc(ep.name)}/logs`)).logs || '(no logs yet: the pod may still be waiting for Slurm)'; }
+    try { $('#lg').textContent = (await api(`endpoints/${enc(ep.name)}/logs`)).logs || 'No logs yet. It may still be waiting for a GPU.'; }
     catch (e) { $('#lg').textContent = e.message; }
   };
   $('#rl').onclick = load; load();
@@ -587,85 +646,93 @@ async function logsTab(ep) {
 // ---------- Help ----------
 function renderHelp() {
   const ui = mlflowUI();
-  const step = (n, icon, title, body) => `<div class="accordion-item"><h2 class="accordion-header">
-      <button class="accordion-button ${n ? 'collapsed' : ''}" type="button" data-bs-toggle="collapse" data-bs-target="#h${n}" aria-expanded="${!n}">
-        <i class="bi bi-${icon} me-2"></i>${title}</button></h2>
+  const step = (n, icon, title, tag, body) => `<div class="accordion-item"><h2 class="accordion-header">
+      <button class="accordion-button ${n ? 'collapsed' : ''} gap-2" type="button" data-bs-toggle="collapse" data-bs-target="#h${n}" aria-expanded="${!n}">
+        <i class="bi bi-${icon}"></i><span class="me-auto">${title}</span>${tag ? `<span class="badge rounded-pill bg-body-secondary text-body-secondary fw-medium me-2">${tag}</span>` : ''}</button></h2>
       <div id="h${n}" class="accordion-collapse collapse ${n ? '' : 'show'}" data-bs-parent="#acc"><div class="accordion-body">${body}</div></div></div>`;
-  app.innerHTML = header('How to get your model here', 'Model Hub lists the models you <b>registered</b> in MLflow. A run that only logged metrics does not show up.') +
-    `<div class="accordion shadow-sm mb-4" id="acc">
-      ${step(0, 'graph-up', 'Classic ML (sklearn, XGBoost, LightGBM, CatBoost) · CPU', codeBlock('h-ml',
+  app.innerHTML = header('Add your model', 'Register a model in MLflow and it shows up in Models. Pick your type below.') +
+    `<div class="row g-4 align-items-start"><div class="col-lg-8">
+    <div class="accordion mb-4" id="acc">
+      ${step(0, 'graph-up', 'Classic ML: scikit-learn, XGBoost, LightGBM, CatBoost', 'CPU', codeBlock('h-ml',
 `mlflow.set_experiment("my-project")
 with mlflow.start_run():
     mlflow.sklearn.log_model(model, name="model", registered_model_name="churn",
-                             input_example=X[:5])   # its columns become the playground form`, 'In your training script'))}
-      ${step(1, 'cpu', 'Deep learning (PyTorch) · GPU or CPU', codeBlock('h-dl',
+                             input_example=X[:5])   # its columns become the form`, 'Add to your training script'))}
+      ${step(1, 'cpu', 'Deep learning: PyTorch', 'GPU or CPU', codeBlock('h-dl',
 `mlflow.pytorch.log_model(net, name="model", registered_model_name="my-net",
-                         input_example=X[:2].numpy())   # required: MLflow 3 traces the model with it`, 'In your training script'))}
-      ${step(2, 'chat-dots', 'LLM (Hugging Face folder) · GPU', codeBlock('h-llm',
-`model-register ~/models/my-llm/v1 my-llm   # weights stay in ~/models; MLflow keeps the path`, 'On master'))}
-      ${step(3, 'arrow-repeat', 'Already trained? Register an existing run', `<p class="small">In the <a href="${h(ui)}" target="_blank" rel="noopener">MLflow UI</a>:
-          open the run → <b>Logged models</b> / <b>Artifacts</b> → select the model → <b>Register model</b>. Or in Python:</p>` +
-        codeBlock('h-reg', 'mlflow.register_model("runs:/<RUN_ID>/model", "my-model")', 'Python'))}
-      ${step(4, 'window-stack', 'Build your own app on the endpoint', `<p class="small mb-2">The playground covers the
-          common cases: <b>JSON</b> always, a <b>form</b> for table models, <b>image</b> upload/draw for image tensors, <b>chat</b> for LLMs.
-          For anything else write your own app in any tool (Flask, FastAPI, Streamlit, Gradio…):</p>
-        <ol class="small mb-0"><li>Open your endpoint → <b>API</b> tab: URL, headers, request/response format and a curl example.</li>
-          <li>Your app can run <b>anywhere</b>, your computer or the cluster: it calls the gateway address from the API tab
-            with your personal key (<a href="#/key">My API key</a>).</li>
-          <li>An app on the cluster opens in this browser through OOD: <code>${h(location.origin)}/rnode/&lt;host&gt;/&lt;port&gt;/</code>, listening on
-            <code>0.0.0.0:&lt;port&gt;</code> with its base path set to <code>/rnode/&lt;host&gt;/&lt;port&gt;</code>. Give it a password:
-            every OOD user can open any <code>/rnode</code> address.</li></ol>`)}
-    </div>
-    <div class="card border-0 shadow-sm"><div class="card-body small"><h2 class="h6">Good to know</h2><ul class="mb-0">
-      <li>Train with the cluster's containers (ml-classic, pytorch-mlflow): the serving images use the same library versions.</li>
-      <li>Jobs log in to MLflow with the token in <code>~/.mlflow/credentials</code>; the <a href="${h(ui)}" target="_blank" rel="noopener">MLflow UI</a> uses your cluster password.</li>
-      <li>You may use ${ME.limits.gpus} GPU${ME.limits.gpus === 1 ? '' : 's'} at a time. Endpoints stop after their hours (default ${ME.limits.default_hours}, max ${ME.limits.max_hours}); deploy again to restart. The admin can give you more.</li></ul></div></div>`;
+                         input_example=X[:2].numpy())   # required: MLflow uses it to trace the model`, 'Add to your training script'))}
+      ${step(2, 'chat-dots', 'Chat model (LLM): a Hugging Face folder', 'GPU', codeBlock('h-llm',
+`model-register ~/models/my-llm/v1 my-llm   # the weights stay in ~/models`, 'Run on the login node'))}
+      ${step(3, 'arrow-repeat', 'Already trained? Register an existing run', '', `<p class="small">In the <a href="${h(ui)}" target="_blank" rel="noopener">MLflow UI</a>:
+          open the run, go to <b>Logged models</b> or <b>Artifacts</b>, select the model, then click <b>Register model</b>. Or in Python:</p>` +
+        codeBlock('h-reg', 'mlflow.register_model("runs:/<RUN_ID>/model", "my-model")'))}
+      ${step(4, 'window-stack', 'Build your own app on top', '', `<p class="small mb-2"><b>Try it</b> covers the common cases: chat for LLMs,
+          a form for table data, image upload or drawing for image models, and raw JSON for everything else. For more, build your own app
+          (Flask, FastAPI, Streamlit, Gradio…):</p>
+        <ol class="small mb-0"><li>Open your endpoint and go to <b>Use the API</b>. It has the URL and copy-paste examples.</li>
+          <li>Your app can run anywhere, on your laptop or the cluster. It uses your <a href="#/key">API key</a>.</li>
+          <li>To open an app running on the cluster in this browser, use <code>${h(location.origin)}/rnode/&lt;host&gt;/&lt;port&gt;/</code>.
+            Make it listen on <code>0.0.0.0:&lt;port&gt;</code> with base path <code>/rnode/&lt;host&gt;/&lt;port&gt;</code>.
+            Add a password: any cluster user can open <code>/rnode</code> addresses.</li></ol>`)}
+    </div></div>
+    <div class="col-lg-4"><div class="card"><div class="card-body p-4 small"><div class="eyebrow mb-3">Good to know</div><ul class="mb-0 ps-3 d-flex flex-column gap-2">
+      <li>Train with the cluster's containers (ml-classic, pytorch-mlflow). Then your model uses the same library versions it's served with.</li>
+      <li>Your jobs sign in to MLflow with <code>~/.mlflow/credentials</code>. The <a href="${h(ui)}" target="_blank" rel="noopener">MLflow UI</a> uses your cluster password.</li>
+      <li>You can use up to ${ME.limits.gpus} GPU${ME.limits.gpus === 1 ? '' : 's'} at once. An endpoint runs for ${ME.limits.default_hours} hours by default
+        (max ${ME.limits.max_hours}), then stops. Deploy again to restart it. Need more? Ask your admin.</li></ul></div></div></div></div>`;
   wireCopies();
 }
 
-// ---------- routing ----------
+// ---------- API key ----------
 async function renderKey() {
-  app.innerHTML = header('My API key', 'One key for every endpoint you may call (yours and those shared with you), from anywhere.') + spinner();
-  let k; try { k = await api('key'); } catch (e) { app.innerHTML = header('My API key') + alertBox(e); return; }
+  const top = header('API key', 'One key lets your apps use your endpoints, and the ones shared with you.');
+  app.innerHTML = top + spinner();
+  let k; try { k = await api('key'); } catch (e) { app.innerHTML = top + alertBox(e); return; }
   const gw = ME.gateway?.url;
-  app.innerHTML = header('My API key', 'One key for every endpoint you may call (yours and those shared with you), from anywhere.') + `
-    <div class="row g-4"><div class="col-lg-7"><div class="card border-0 shadow-sm"><div class="card-body">
-      <p>${k.exists ? `<i class="bi bi-key-fill text-success me-1"></i>You have a key, made ${h(new Date(k.created).toLocaleString())}.`
-                    : '<i class="bi bi-key me-1"></i>You have no key yet.'}</p>
+  app.innerHTML = top + `
+    <div class="row g-4 align-items-start"><div class="col-lg-7"><div class="card"><div class="card-body p-4">
+      <div class="d-flex align-items-center gap-3 mb-4">
+        <span class="kind-icon ${k.exists ? 'bg-success-subtle text-success-emphasis' : 'bg-body-secondary text-body-secondary'}"><i class="bi bi-key${k.exists ? '-fill' : ''}"></i></span>
+        <div class="me-auto"><div class="fw-semibold">${k.exists ? 'Your key is active' : 'You don\'t have a key yet'}</div>
+          <div class="small text-body-secondary">${k.exists ? `Created <span title="${h(when(Date.parse(k.created)))}">${ago(Date.parse(k.created))}</span>` : 'Create one to call endpoints from your code.'}</div></div></div>
       <div id="newkey"></div>
-      <div class="d-flex gap-2">
-        <button class="btn btn-primary" id="mk"><i class="bi bi-plus-lg me-1"></i>${k.exists ? 'Make a new key' : 'Make my key'}</button>
-        ${k.exists ? '<button class="btn btn-outline-danger" id="rv"><i class="bi bi-x-lg me-1"></i>Revoke</button>' : ''}</div>
-      <p class="small text-body-secondary mt-3 mb-0">The key is shown <b>once</b>; only a fingerprint of it is stored. A new key replaces the
-        old one, and revoking stops it; both take effect within a minute. Treat it like a password: keep it in an
-        environment variable (<code>export MH_KEY=…</code>), never in code or git.</p>
+      <div class="d-flex flex-wrap gap-2">
+        <button class="btn btn-primary" id="mk"><i class="bi bi-${k.exists ? 'arrow-repeat' : 'plus-lg'} me-1"></i>${k.exists ? 'Replace key' : 'Create key'}</button>
+        ${k.exists ? '<button class="btn btn-outline-danger" id="rv">Revoke</button>' : ''}</div>
+      <hr class="my-4">
+      <ul class="small text-body-secondary mb-0 ps-3 d-flex flex-column gap-1">
+        <li>You see the key <b>only once</b>, so copy it right away. We don't store it.</li>
+        <li>Treat it like a password. Keep it in an environment variable, never in your code or git.</li>
+        <li>Replacing or revoking a key takes effect within a minute.</li></ul>
     </div></div></div>
-    <div class="col-lg-5"><div class="card border-0 shadow-sm"><div class="card-body small">
-      <h2 class="h6">Using it</h2>
-      <p>Gateway: <code>${h(gw || 'not installed yet')}</code></p>
-      <p>Call <code>${h(gw || '')}/${h(ME.user)}/&lt;endpoint&gt;/…</code> with the header <code>Authorization: Bearer $MH_KEY</code>.
-        Each endpoint's <b>API</b> tab has ready-made examples.</p>
-      ${ME.gateway?.ca ? `<p class="mb-0">The gateway uses a self-signed certificate. Download it once:
-        <a href="api/gateway-ca" download="gateway-ca.crt"><i class="bi bi-download me-1"></i>gateway-ca.crt</a>, then <code>curl --cacert gateway-ca.crt …</code></p>` : ''}
+    <div class="col-lg-5"><div class="card"><div class="card-body p-4">
+      <div class="eyebrow mb-3">How to use it</div>
+      <ol class="steps small">
+        <li>Save it in your terminal:<div class="mt-2"><code>export MH_KEY='mh~${h(ME.user)}~…'</code></div></li>
+        ${ME.gateway?.ca ? `<li>Download the certificate once. It's the same for everyone.<div class="mt-2">${caLink('gateway-ca.crt')}</div></li>` : ''}
+        <li>Open any endpoint and go to <b>Use the API</b> for ready-to-run examples.
+          <div class="mt-2"><a class="btn btn-sm btn-outline-secondary" href="#/endpoints">My endpoints</a></div></li></ol>
+      ${gw ? `<div class="small text-body-secondary mt-4">Gateway: <code>${h(gw)}</code></div>` : '<div class="small text-warning-emphasis mt-4">The gateway is not set up yet. Ask your admin.</div>'}
     </div></div></div></div>`;
   $('#mk').onclick = async () => {
-    if (k.exists && !confirm('Make a new key? The old one stops working within a minute.')) return;
+    if (k.exists && !confirm('Replace your key? The old one stops working within a minute.')) return;
     try {
       const r = await api('key', { method: 'POST' });
-      $('#newkey').innerHTML = `<div class="alert alert-success"><b>Your new key</b>, copy it now: it won't be shown again.
-        <div class="input-group input-group-sm mt-2"><input class="form-control font-monospace" id="kv" readonly value="${h(r.key)}">
-        <button class="btn btn-outline-secondary" id="kc"><i class="bi bi-clipboard me-1"></i>Copy</button></div>
-        <div class="mt-2"><code>export MH_KEY='${h(r.key)}'</code></div></div>`;
+      $('#newkey').innerHTML = `<div class="alert alert-success mb-4"><div class="fw-semibold mb-1"><i class="bi bi-check-circle me-1"></i>Here's your new key</div>
+        <div class="small mb-2">Copy it now. You won't see it again.</div>
+        <div class="input-group"><input class="form-control font-monospace" id="kv" readonly value="${h(r.key)}" aria-label="Your new key">
+        <button class="btn btn-success" id="kc"><i class="bi bi-clipboard me-1"></i>Copy</button></div></div>`;
       $('#kc').onclick = () => copy(r.key);
-      $('#mk').innerHTML = '<i class="bi bi-plus-lg me-1"></i>Make a new key'; k.exists = true;
+      $('#mk').innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Replace key'; k.exists = true;
     } catch (e) { $('#newkey').innerHTML = alertBox(e); }
   };
   if (k.exists) $('#rv').onclick = async () => {
-    if (!confirm('Revoke your key? Scripts using it stop working within a minute.')) return;
+    if (!confirm('Revoke your key? Anything using it stops working within a minute.')) return;
     try { await api('key', { method: 'DELETE' }); toast('Key revoked'); renderKey(); } catch (e) { toast(e.message); }
   };
 }
 
+// ---------- routing ----------
 async function route() {
   clearTimeout(timer);
   const [page, a, b] = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
@@ -676,7 +743,7 @@ async function route() {
   });
   if (!ME) {
     try { ME = await api('me'); } catch (e) { app.innerHTML = alertBox(e); return; }
-    $('#who').innerHTML = `<i class="bi bi-person me-1"></i>${h(ME.user)}`;
+    $('#who').innerHTML = `<span class="avatar" aria-hidden="true">${h(ME.user[0])}</span><span class="text-body-secondary">${h(ME.user)}</span>`;
     const missing = [!ME.mlflow && 'an MLflow token (<code>~/.mlflow/credentials</code>)',
                      !ME.kube && 'a cluster login (<code>~/.kube/aistack.config</code>)'].filter(Boolean);
     if (missing.length) {
@@ -693,6 +760,7 @@ async function route() {
   return renderModels();
 }
 window.addEventListener('hashchange', () => { app.innerHTML = ''; route(); });
+$('#yaml').addEventListener('hidden.bs.modal', () => { $('#yaml-body').innerHTML = ''; });   // its ids (x-curl…) shouldn't linger
 
 // dark mode: Bootstrap's own data-bs-theme; remembered per browser
 const setTheme = t => { document.documentElement.dataset.bsTheme = t; $('#theme').innerHTML = `<i class="bi bi-${t === 'dark' ? 'sun' : 'moon-stars'}"></i>`; };

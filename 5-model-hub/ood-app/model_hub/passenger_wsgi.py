@@ -3,8 +3,8 @@
 Everything goes through the user's own credentials, so the app can never do more than the user could by hand:
   MLflow  ~/.mlflow/credentials          list their models, read a version's MLmodel (signature, flavors)
   k8s     ~/.kube/aistack.config         deploy / list / logs / delete endpoints in their namespace u-<user>
-Endpoints are called server-side at their ClusterIP (v1 has no gateway), so no key or token reaches the browser
-except the user's own vLLM key, shown on purpose for their scripts.
+The playground calls endpoints server-side at their ClusterIP; apps call them through the gateway with the user's
+personal key (made here, shown once). No endpoint's own vLLM key ever reaches the browser.
 Standard library + PyYAML only (system python3). render.py (next to this file) builds the k8s objects.
 site.json (written by 7-install-ood-app.sh from site.conf) holds the site values.
 """
@@ -466,8 +466,6 @@ def route(method, path, body):
             return {"deleted": name}
         if method == "GET" and a[2:] == ["logs"]:
             return {"logs": kubectl("logs", name, "--all-containers", "--tail=300", check=False)}
-        if method == "GET" and a[2:] == ["key"]:
-            return {"key": api_key(name)}
         if method == "POST" and a[2:] == ["share"]:
             return set_share(name, body)
         if method == "POST" and a[2:] == ["predict"]:
