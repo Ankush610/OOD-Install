@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Install Open OnDemand on master. Web login = the LDAP password (same as SSH), with a local htpasswd
-# login for OOD_ADMIN that still works when LDAP is down. Self-signed certificate.
-# Run on master after ../1-ldap: sudo bash setup-ood.sh     (asks once for OOD_ADMIN's web password)
+# Install Open OnDemand on master. Self-signed certificate. Web login, chosen by OOD_AUTH in site.conf:
+#   ldap      Apache asks for the LDAP password itself (same as SSH); htpasswd login for OOD_ADMIN when LDAP is down
+#   keycloak  Apache sends the browser to Keycloak (../6-keycloak) and trusts its login (OpenID Connect,
+#             mod_auth_openidc): one login for OOD, MLflow, Model Hub. OOD_ADMIN is a local Keycloak user
+# Switching back and forth = change OOD_AUTH, rerun this script.
+# Run on master after ../1-ldap (and ../6-keycloak for keycloak): sudo bash setup-ood.sh
+#   (asks once for OOD_ADMIN's web password)
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -13,8 +17,19 @@ KEY=/etc/pki/tls/private/ood.key
 PORTAL=/etc/ood/config/ood_portal.yml
 HTPASSWD=/etc/ood/htpasswd
 
+OIDC_SECRET=/etc/ood/oidc-client.secret
+OIDC_PASSPHRASE=/etc/ood/oidc-crypto.passphrase
+KC_INTERNAL=http://127.0.0.1:$KEYCLOAK_PORT$KEYCLOAK_PATH
+
 ldapsearch -x -LLL -H ldap://localhost -b "$LDAP_BASE" -s base dn >/dev/null 2>&1 ||
   { echo "No LDAP on localhost ($LDAP_BASE). Run ../1-ldap/1-server.sh first." >&2; exit 1; }
+case $OOD_AUTH in
+  ldap) ;;
+  keycloak)
+    curl -sf -o /dev/null "$KC_INTERNAL/realms/$KEYCLOAK_REALM/.well-known/openid-configuration" ||
+      { echo "OOD_AUTH=keycloak, but realm $KEYCLOAK_REALM doesn't answer: run ../6-keycloak/1-install.sh and 2-realm.sh." >&2; exit 1; } ;;
+  *) echo "OOD_AUTH must be ldap or keycloak (site.conf), not '$OOD_AUTH'." >&2; exit 1 ;;
+esac
 
 echo "== 1. Repos"
 dnf config-manager --set-enabled crb
@@ -29,8 +44,8 @@ if ! getent group saslauth >/dev/null && getent group 76 >/dev/null; then
   groupadd -r saslauth
 fi
 
-echo "== 3. Packages (mod_ldap: Apache checks web passwords against LDAP)"
-dnf install -y ondemand mod_ssl mod_ldap httpd-tools
+echo "== 3. Packages (mod_ldap: Apache checks LDAP passwords; mod_auth_openidc: Keycloak login)"
+dnf install -y ondemand mod_ssl mod_ldap httpd-tools mod_auth_openidc
 
 echo "== 4. Self-signed certificate"
 [ -f "$CERT" ] || openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
@@ -38,26 +53,64 @@ echo "== 4. Self-signed certificate"
 
 echo "== 5. Local web login for ${OOD_ADMIN} (fallback when LDAP is down)"
 id "$OOD_ADMIN" >/dev/null
-[ -f "$HTPASSWD" ] || htpasswd -c "$HTPASSWD" "$OOD_ADMIN"
+if [ "$OOD_AUTH" = ldap ]; then
+  [ -f "$HTPASSWD" ] || htpasswd -c "$HTPASSWD" "$OOD_ADMIN"
+else
+  export KC_URL=$KC_INTERNAL KEYCLOAK_ADMIN KEYCLOAK_DATA KEYCLOAK_REALM
+  # not in LDAP, so Keycloak keeps its password itself; asked once, only when the user doesn't exist yet
+  if python3 "$HERE/../6-keycloak/kc.py" local-user "$OOD_ADMIN" </dev/null 2>/dev/null | grep -q exists; then
+    echo "${OOD_ADMIN}: already a local Keycloak user"
+  else
+    read -rsp "New Keycloak password for ${OOD_ADMIN} (8+ characters): " pw; echo
+    printf '%s' "$pw" | python3 "$HERE/../6-keycloak/kc.py" local-user "$OOD_ADMIN"; unset pw
+  fi
+fi
 
 echo "== 6. Portal config"
 [ -f "$PORTAL.orig" ] || cp "$PORTAL" "$PORTAL.orig"
 # ldap BEFORE file: Apache stops at the first provider that knows the user, so LDAP decides for
 # everyone in it; only accounts LDAP doesn't know (OOD_ADMIN) fall through to htpasswd.
 # ldap://localhost: Apache and LDAP are both on master, so the password never leaves the machine.
-cat > "$PORTAL" <<EOF
+if [ "$OOD_AUTH" = ldap ]; then
+  auth="auth:
+  - 'AuthType Basic'
+  - 'AuthName \"Open OnDemand\"'
+  - 'AuthBasicProvider ldap file'
+  - 'AuthLDAPURL \"ldap://localhost/ou=People,${LDAP_BASE}?uid?one\"'
+  - 'AuthUserFile \"${HTPASSWD}\"'
+  - 'Require valid-user'"
+else
+  python3 "$HERE/../6-keycloak/kc.py" client ood "https://${OOD_SERVERNAME}" "$OIDC_SECRET"
+  [ -s "$OIDC_PASSPHRASE" ] || (umask 077; openssl rand -hex 32 | tr -d '\n' > "$OIDC_PASSPHRASE")
+  # Apache talks to Keycloak on 127.0.0.1 (no certificate problem); Keycloak still names its public address
+  # (https://$OOD_SERVERNAME$KEYCLOAK_PATH) as the issuer and the browser login page.
+  # preferred_username = the LDAP uid = the Linux user OOD runs the session as (no user map needed).
+  # logout: /oidc?logout= ends the Keycloak session too, then comes back to OOD.
+  auth="auth:
+  - 'AuthType openid-connect'
+  - 'Require valid-user'
+oidc_uri: '/oidc'
+oidc_provider_metadata_url: '${KC_INTERNAL}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration'
+oidc_client_id: 'ood'
+oidc_client_secret: '$(cat "$OIDC_SECRET")'
+oidc_crypto_passphrase: '$(cat "$OIDC_PASSPHRASE")'
+oidc_remote_user_claim: 'preferred_username'
+oidc_scope: 'openid profile'
+oidc_session_inactivity_timeout: 28800
+oidc_session_max_duration: 28800
+oidc_settings:
+  OIDCPassClaimsAs: 'environment'
+  OIDCStripCookies: 'mod_auth_openidc_session mod_auth_openidc_session_chunks mod_auth_openidc_session_0 mod_auth_openidc_session_1'
+  OIDCPKCEMethod: 'S256'
+logout_redirect: '/oidc?logout=https%3A%2F%2F${OOD_SERVERNAME}%2F'"
+fi
+(umask 077; cat > "$PORTAL" <<EOF
 servername: ${OOD_SERVERNAME}
 port: 443
 ssl:
   - 'SSLCertificateFile "${CERT}"'
   - 'SSLCertificateKeyFile "${KEY}"'
-auth:
-  - 'AuthType Basic'
-  - 'AuthName "Open OnDemand"'
-  - 'AuthBasicProvider ldap file'
-  - 'AuthLDAPURL "ldap://localhost/ou=People,${LDAP_BASE}?uid?one"'
-  - 'AuthUserFile "${HTPASSWD}"'
-  - 'Require valid-user'
+${auth}
 # proxy for interactive apps
 node_uri: '/node'
 rnode_uri: '/rnode'
@@ -71,6 +124,8 @@ custom_vhost_directives:
   - '  RequestHeader set X-Forwarded-Port "443"'
   - '</Location>'
 EOF
+)
+chmod 600 "$PORTAL"                               # holds the OIDC client secret when OOD_AUTH=keycloak
 /opt/ood/ood-portal-generator/sbin/update_ood_portal
 
 echo "== 7. Cluster config"
@@ -101,11 +156,16 @@ fi
 echo "== 9. Check"
 rpm -q ondemand mod_ldap
 echo "/                   -> $(curl -skI -o /dev/null -w '%{http_code}' https://localhost/)   (expect 302)"
-echo "/pun/sys/dashboard  -> $(curl -skI -o /dev/null -w '%{http_code}' https://localhost/pun/sys/dashboard)   (expect 401)"
+if [ "$OOD_AUTH" = ldap ]; then
+  echo "/pun/sys/dashboard  -> $(curl -skI -o /dev/null -w '%{http_code}' https://localhost/pun/sys/dashboard)   (expect 401: asks for the LDAP password)"
+else
+  loc=$(curl -sk -o /dev/null -w '%{redirect_url}' https://localhost/pun/sys/dashboard)
+  echo "/pun/sys/dashboard  -> ${loc%%\?*}   (expect https://${OOD_SERVERNAME}${KEYCLOAK_PATH}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/auth)"
+fi
 echo "${KEYCLOAK_PATH}/realms/master -> $(curl -sk -o /dev/null -w '%{http_code}' https://localhost${KEYCLOAK_PATH}/realms/master)   (expect 200 once 6-keycloak is installed, 503 before)"
 cat <<EOF
 
-Done. Test an LDAP login (asks for the password, expect 200):
-  curl -sk -o /dev/null -w '%{http_code}\n' -u <ldap-user> https://localhost/pun/sys/dashboard
+Done (OOD_AUTH=${OOD_AUTH}). Test in the browser: https://${OOD_SERVERNAME}  -> log in with an LDAP user's password
+  (keycloak: a Keycloak login page first; then OOD opens; "Log Out" in OOD logs out of Keycloak too).
 From the laptop: tunnel local port 443 to ${MASTER_HOST}:443, then open https://${OOD_SERVERNAME}
 EOF

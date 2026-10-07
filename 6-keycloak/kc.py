@@ -6,6 +6,12 @@ KEYCLOAK_ADMIN, KEYCLOAK_DATA (admin.pass lives there). Passwords are read from 
 
   kc.py admin   make KEYCLOAK_ADMIN a permanent admin, then delete the first-start bootstrap admin
   kc.py realm   realm KEYCLOAK_REALM + read-only LDAP users and groups, then a full sync
+  kc.py client ID BASE_URL SECRET_FILE
+                confidential OIDC client ID for a web app at BASE_URL (login returns to BASE_URL/oidc);
+                its secret is written to SECRET_FILE (mode 600)
+  kc.py local-user NAME
+                a realm user that is NOT in LDAP (the local admin's way in when LDAP is down);
+                password from stdin; does nothing if the user already exists
 """
 import json
 import os
@@ -152,6 +158,52 @@ def cmd_realm():
         sys.exit("some LDAP users failed to sync (see Keycloak's log: journalctl -u keycloak)")
 
 
+def cmd_client(client_id, base, secret_file):
+    """Browser login for one web app (OIDC authorization code flow). Safe to rerun: updates it, keeps the secret."""
+    a, realm, base = login(), os.environ["KEYCLOAK_REALM"], base.rstrip("/")
+    body = {
+        "clientId": client_id, "name": client_id, "enabled": True, "protocol": "openid-connect",
+        "publicClient": False, "clientAuthenticatorType": "client-secret",
+        "standardFlowEnabled": True,                 # browser login only
+        "implicitFlowEnabled": False, "directAccessGrantsEnabled": False, "serviceAccountsEnabled": False,
+        "redirectUris": [f"{base}/oidc"], "webOrigins": [base], "rootUrl": base, "baseUrl": "/",
+        "attributes": {"post.logout.redirect.uris": f"{base}/*", "pkce.code.challenge.method": "S256"},
+    }
+    found = a.get(f"/realms/{realm}/clients?clientId={urllib.parse.quote(client_id)}")
+    if found:
+        cid = found[0]["id"]
+        a.call("PUT", f"/realms/{realm}/clients/{cid}", {**found[0], **body})
+        print(f"client {client_id}: updated ({base}/oidc)")
+    else:
+        a.call("POST", f"/realms/{realm}/clients", body)
+        cid = a.get(f"/realms/{realm}/clients?clientId={urllib.parse.quote(client_id)}")[0]["id"]
+        print(f"client {client_id}: created ({base}/oidc)")
+    secret = a.get(f"/realms/{realm}/clients/{cid}/client-secret")["value"]
+    old = os.umask(0o077)
+    try:
+        with open(secret_file, "w") as f:
+            f.write(secret)
+    finally:
+        os.umask(old)
+    os.chmod(secret_file, 0o600)
+
+
+def cmd_local_user(name):
+    a, realm = login(), os.environ["KEYCLOAK_REALM"]
+    if a.get(f"/realms/{realm}/users?exact=true&username={urllib.parse.quote(name)}"):
+        print(f"user {name}: exists (change its password in the admin console: Users -> {name} -> Credentials)")
+        return
+    pw = sys.stdin.read().rstrip("\n")
+    if len(pw) < 8:
+        sys.exit("password too short (8+ characters)")
+    a.call("POST", f"/realms/{realm}/users", {"username": name, "enabled": True, "firstName": name, "lastName": "local",
+           "credentials": [{"type": "password", "value": pw, "temporary": False}]})
+    print(f"user {name}: created (local to Keycloak, not in LDAP)")
+
+
 if __name__ == "__main__":
-    {"admin": cmd_admin, "realm": cmd_realm}.get(sys.argv[1] if len(sys.argv) > 1 else "",
-                                                 lambda: sys.exit(__doc__))()
+    cmds = {"admin": (cmd_admin, 0), "realm": (cmd_realm, 0), "client": (cmd_client, 3), "local-user": (cmd_local_user, 1)}
+    name, args = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ("", [])
+    if name not in cmds or len(args) != cmds[name][1]:
+        sys.exit(__doc__)
+    cmds[name][0](*args)
