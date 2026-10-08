@@ -1,6 +1,7 @@
 // Model Hub UI (Bootstrap 5.3). Talks only to this app's backend (passenger_wsgi.py, running as the logged-in user):
 //   GET api/me | api/models | api/models/<name>/<version> | api/endpoints | api/endpoints/<n>/logs
-//   POST api/deploy | api/endpoints/<n>/predict      DELETE api/endpoints/<n>
+//   GET api/models/<n>/<v>/download (state) | api/models/<n>/<v>/zip (the files)
+//   POST api/deploy | api/endpoints/<n>/predict | api/models/<name>/public | api/models/<n>/<v>/download   DELETE api/endpoints/<n>
 // Routes: #/  #/model/<name>[/<version>]  #/endpoints  #/endpoint/<name>  #/key  #/help
 'use strict';
 const $ = s => document.querySelector(s);
@@ -42,6 +43,7 @@ const stateBadge = s => { const [c, t] = STATE[s] || ['secondary', s];
 const cap = s => s ? s[0].toUpperCase() + s.slice(1) : '';
 // "models:/churn/3" -> "churn · v3"
 const modelLabel = uri => { const m = /^models:\/(.+)\/(\d+)$/.exec(uri || ''); return m ? `${h(m[1])} · v${m[2]}` : h(uri); };
+const pubBadge = (t = 'Public') => `<span class="badge rounded-pill bg-success-subtle text-success-emphasis fw-medium"><i class="bi bi-globe2 me-1"></i>${t}</span>`;
 const hwLabel = n => n ? `<span><i class="bi bi-gpu-card"></i>${n > 1 ? n + ' GPUs' : 'GPU'}</span>` : '<span><i class="bi bi-cpu"></i>CPU</span>';
 const when = ms => ms ? new Date(ms).toLocaleString() : '';
 const ago = ms => {
@@ -109,7 +111,8 @@ async function renderModels() {
         <a class="card h-100 text-decoration-none text-body model-card" href="#/model/${enc(m.name)}"><div class="card-body d-flex flex-column">
           <div class="d-flex gap-3 align-items-center mb-3">${kindIcon(m.tags.path ? 'LLM' : '')}
             <div class="min-w-0 me-auto"><div class="fw-semibold text-truncate" title="${h(m.name)}">${h(m.name)}</div>
-              <div class="small text-body-secondary">${m.tags.path ? 'Chat model' : 'Model'}</div></div>
+              <div class="small text-body-secondary">${m.tags.path ? 'Chat model' : 'Model'}${m.tags.public === 'true' && m.tags.owner && m.tags.owner !== ME.user ? ` · by ${h(m.tags.owner)}` : ''}</div></div>
+            ${m.tags.public === 'true' ? pubBadge() : ''}
             <span class="badge rounded-pill bg-body-secondary text-body-secondary fw-medium">v${m.latest ?? '–'}</span></div>
           <p class="card-text small text-body-secondary clamp-2 mb-3">${h(m.description) || 'No description yet.'}</p>
           <div class="small text-body-secondary mt-auto" title="${h(when(m.updated))}">Updated ${ago(m.updated)}</div></div></a></div>`).join('')
@@ -152,13 +155,14 @@ async function renderModel(name, version) {
     isLLM && fact('Context', llm.context && `${num(llm.context)} tokens`),
     fact('Size', bytes(isLLM ? llm.size : info.size)),
     fact('Added', `<span title="${h(when(info.created))}">${ago(info.created)}</span>`),
-    run?.user && fact('By', h(run.user)),
+    (run?.user || !info.mine) && fact('By', h(run?.user || info.owner)),
   ].filter(Boolean).join('');
   const dd = (k, v) => v ? `<dt class="col-sm-4 fw-normal text-body-secondary">${k}</dt><dd class="col-sm-8">${v}</dd>` : '';
   app.innerHTML = `${back('#/', 'All models')}
     <div class="d-flex flex-wrap align-items-center gap-3 mb-4">${kindIcon(info.kind)}
       <div class="me-auto min-w-0"><h1 class="h3 fw-semibold mb-0 text-break">${h(name)}</h1>
         <div class="text-body-secondary">${info.description ? h(info.description) : kindName(info.kind)}</div></div>
+      ${info.public ? pubBadge(info.mine ? 'Public' : `Public · by ${h(info.owner)}`) : ''}
       <select class="form-select w-auto" id="ver" aria-label="Version">${versions.map(v =>
         `<option value="${v}" ${v === info.version ? 'selected' : ''}>Version ${v}${v === latest ? ' (latest)' : ''}</option>`).join('')}</select></div>
     <div class="row g-4 align-items-start">
@@ -180,6 +184,9 @@ async function renderModel(name, version) {
             : 'Trained with the same library versions used to serve it.'}</p>
           <div class="d-flex flex-wrap gap-2">${libs.map(l => `<span class="badge rounded-pill ${l.ok ? 'bg-body-secondary text-body-secondary' : 'bg-warning-subtle text-warning-emphasis'} fw-normal"
               title="trained ${h(l.trained)}, serving ${h(l.serving)}">${h(l.name)} ${h(l.trained)}${l.ok ? '' : ` → ${h(l.serving)}`}</span>`).join('')}</div></div></div>`}
+        ${info.can_manage ? publicCard(name, info) : ''}
+        ${!info.mine && !isLLM ? `<div class="alert alert-warning d-flex gap-2 mb-0" role="alert"><i class="bi bi-exclamation-triangle mt-1"></i>
+          <div>Public model by <b>${h(info.owner)}</b>. When you deploy it, it runs ${h(info.owner)}'s code in your space. Deploy only models from people you trust.</div></div>` : ''}
         <details class="card"><summary class="card-body small fw-semibold">Technical details</summary>
           <div class="card-body pt-0"><dl class="row small mb-0">
           ${dd('Served with', isLLM ? 'vLLM (OpenAI-compatible API)' : 'MLflow serving (<code>/invocations</code>)')}
@@ -214,8 +221,18 @@ async function renderModel(name, version) {
           <button class="btn btn-primary w-100" id="go" type="submit"><i class="bi bi-rocket-takeoff me-1"></i>Deploy</button>
           <button class="btn btn-link btn-sm w-100 mt-1 text-body-secondary text-decoration-none" id="pre" type="button">See what gets created</button>
         </form><div id="out" class="mt-3"></div>
-      </div></div></div>
+      </div></div>
+      ${isLLM && info.mine ? '' : `<div class="card mt-4"><div class="card-body p-4" id="dlcard"></div></div>`}</div>
     </div>`;
+  // the cluster's timer is copying the files: refresh only this card until it's done (or failed)
+  const size = isLLM ? llm.size : info.size, copying = i => i.public && !/^(ready|error)/.test(i.public_status || '');
+  const wire = i => { if ($('#pub')) $('#pub').onclick = () => togglePublic(name, i, size);
+    if (i.can_manage && copying(i)) timer = setTimeout(async () => {
+      if (!$('#pubcard')) return;
+      try { const n = await api(`models/${enc(name)}/${info.version}`); $('#pubcard').outerHTML = publicCard(name, n); wire(n); } catch (e) { /* next page load */ }
+    }, 5000); };
+  wire(info);
+  if ($('#dlcard')) downloadCard(name, info, isLLM ? llm.size : info.size);
   $('#ver').onchange = () => { location.hash = `#/model/${enc(name)}/${$('#ver').value}`; };
   const body = extra => ({ model: name, version: info.version, endpoint: $('#ep').value.trim(), gpu: !!$('#hw').value,
                            gpu_type: $('#hw').value, gpus: +($('#hw').selectedOptions[0]?.dataset.gpus || 1),
@@ -236,6 +253,74 @@ async function renderModel(name, version) {
           toast(`Starting ${r.endpoint}…`); location.hash = `#/endpoint/${enc(r.endpoint)}`; }
     catch (e) { $('#out').innerHTML = alertBox(e); $('#go').disabled = false; $('#go').innerHTML = '<i class="bi bi-rocket-takeoff me-1"></i>Deploy'; }
   };
+}
+
+// Make public / Make private (owner only). The button sets a tag; a timer on the cluster does the rest within a minute.
+// a real progress bar: bytes copied so far of the total (null total = not counted yet: a moving bar)
+const progressBar = (done, total, label) => {
+  const pct = total ? Math.min(100, Math.floor(done / total * 100)) : 100;
+  return `<div class="mt-2"><div class="progress" role="progressbar" aria-label="${h(label)}" aria-valuenow="${total ? pct : 0}" aria-valuemin="0" aria-valuemax="100" style="height:.5rem">
+      <div class="progress-bar ${total ? '' : 'progress-bar-striped progress-bar-animated'}" style="width:${pct}%"></div></div>
+    <div class="small text-body-secondary mt-1">${h(label)}${total ? ` · ${pct}% · ${bytes(done) || '0 B'} of ${bytes(total)}` : ''}</div></div>`;
+};
+// public_status from the cluster's timer: waiting | copying <done>/<total> | ready | error: …
+const PSTATUS = { waiting: ['secondary', 'Waiting to start (within a minute)'], ready: ['success', 'Files shared'] };
+function publicCard(name, info) {
+  const st = info.public_status || 'waiting', cp = /^copying (\d+)\/(\d+)$/.exec(st);
+  const [c, t] = PSTATUS[st] || (st.startsWith('error') ? ['danger', 'Sharing failed'] : ['info', 'Sharing the files…']);
+  return `<div class="card" id="pubcard"><div class="card-body p-4"><div class="d-flex flex-wrap align-items-center gap-3">
+      <div class="me-auto flex-grow-1"><div class="eyebrow mb-1">Who can use this model</div>
+        <div>${info.public ? '<b>Everyone</b>: every user can see, deploy and download it.' : '<b>Only you.</b> Endpoints you share still work for the people you shared them with.'}</div>
+        ${!info.public ? '' : cp ? progressBar(+cp[1], +cp[2], 'Sharing the files')
+          : `<div class="small mt-1"><span class="status bg-${c}-subtle text-${c}-emphasis">${h(t)}</span>
+          ${st.startsWith('error') ? `<span class="text-danger ms-1">${h(st.slice(7))}</span>` : ''}</div>`}</div>
+      <button class="btn ${info.public ? 'btn-outline-secondary' : 'btn-outline-primary'}" id="pub" type="button">
+        <i class="bi bi-${info.public ? 'lock' : 'globe2'} me-1"></i>${info.public ? 'Make private' : 'Make public'}</button></div></div></div>`;
+}
+function togglePublic(name, info, size) {
+  const on = !info.public;
+  confirmBox(on ? `Make ${h(name)} public?` : `Make ${h(name)} private?`, on
+    ? `Every user will be able to see, deploy and download <b>all versions</b> of ${h(name)}.
+       <ul class="small text-body-secondary mt-2 mb-0"><li>The files are copied once per version${size ? ` (this version: ${bytes(size)})` : ''}. That takes a minute or more.</li>
+       <li>You can make it private again later, but files people already downloaded stay with them.</li></ul>`
+    : `Within a minute other users can't see or deploy ${h(name)} any more, and its shared copy is deleted.
+       <div class="small text-body-secondary mt-2">Endpoints others already run from it keep running until they stop. Files they downloaded stay with them.</div>`,
+    on ? '<i class="bi bi-globe2 me-1"></i>Make public' : '<i class="bi bi-lock me-1"></i>Make private', 'btn-primary', async () => {
+      try { await api(`models/${enc(name)}/public`, { method: 'POST', body: { public: on } });
+            toast(on ? 'Public: sharing the files now' : 'Private again'); route(); }
+      catch (e) { toast(e.message); }
+    });
+}
+function confirmBox(title, body, ok, okClass, fn) {
+  $('#confirm-title').innerHTML = title; $('#confirm-body').innerHTML = body;
+  $('#confirm-ok').className = `btn ${okClass}`; $('#confirm-ok').innerHTML = ok;
+  const m = bootstrap.Modal.getOrCreateInstance($('#confirm'));
+  $('#confirm-ok').onclick = () => { m.hide(); fn(); };
+  m.show();
+}
+
+// Download: a .zip to this computer (ML / DL), or a copy into ~/model-downloads on the cluster (any model, runs
+// in the background: refreshes itself until done)
+async function downloadCard(name, info, size) {
+  const el = $('#dlcard'), base = `models/${enc(name)}/${info.version}/download`;
+  let st; try { st = await api(base); } catch (e) { el.innerHTML = alertBox(e); return; }
+  if (!document.body.contains(el)) return;
+  const where = `<code class="text-break">${h(st.path.replace(/^\/home\/[^/]+/, '~'))}</code>`;
+  const home = { none: '', running: progressBar(st.done || 0, st.total, 'Downloading') + `<div class="small text-body-secondary">into ${where}</div>`,
+    done: `<div class="small mt-2"><span class="status bg-success-subtle text-success-emphasis">In your home folder</span> ${where}</div>`,
+    error: `<div class="small mt-2 text-danger">Download failed: ${h(st.error)}</div>` }[st.state];
+  el.innerHTML = `<h2 class="h5 fw-semibold mb-1">Download</h2>
+    <p class="small text-body-secondary mb-3">Get the model's files${size ? ` (${bytes(size)})` : ''}.</p>
+    <div class="d-grid gap-2">
+      ${info.kind === 'LLM' ? '' : `<a class="btn btn-outline-secondary" href="api/${base.replace(/download$/, 'zip')}" download><i class="bi bi-laptop me-1"></i>To my computer (.zip)</a>`}
+      <button class="btn btn-outline-secondary" id="dlhome" type="button" ${st.state === 'running' || st.state === 'done' ? 'disabled' : ''}>
+        <i class="bi bi-hdd me-1"></i>To my cluster home</button></div>
+    ${home}${info.kind === 'LLM' ? '<div class="form-text">Chat models are too big for the browser. From your home folder, copy them with OOD\'s Files app or <code>scp</code>.</div>' : ''}`;
+  $('#dlhome').onclick = async () => {
+    try { await api(base, { method: 'POST' }); toast('Downloading into your home folder'); downloadCard(name, info, size); }
+    catch (e) { toast(e.message); }
+  };
+  if (st.state === 'running') setTimeout(() => downloadCard(name, info, size), 5000);
 }
 
 // ---------- Endpoints ----------
@@ -343,16 +428,13 @@ async function shareDialog(ep) {
   m.show();
 }
 function del(name) {
-  $('#confirm-body').innerHTML = `<b>${h(name)}</b> stops right away, and anyone using it loses access. Its GPU or CPU is freed for others.
-    <div class="small text-body-secondary mt-2">The model itself is not deleted. You can deploy it again later.</div>`;
-  const m = bootstrap.Modal.getOrCreateInstance($('#confirm'));
-  $('#confirm-ok').onclick = async () => {
-    m.hide();
-    try { await api(`endpoints/${enc(name)}`, { method: 'DELETE' }); toast(`Deleted ${name}`);
-          if (location.hash.startsWith('#/endpoint/')) location.hash = '#/endpoints'; else route(); }
-    catch (e) { toast(e.message); }
-  };
-  m.show();
+  confirmBox('Delete this endpoint?', `<b>${h(name)}</b> stops right away, and anyone using it loses access. Its GPU or CPU is freed for others.
+    <div class="small text-body-secondary mt-2">The model itself is not deleted. You can deploy it again later.</div>`,
+    '<i class="bi bi-trash me-1"></i>Delete', 'btn-danger', async () => {
+      try { await api(`endpoints/${enc(name)}`, { method: 'DELETE' }); toast(`Deleted ${name}`);
+            if (location.hash.startsWith('#/endpoint/')) location.hash = '#/endpoints'; else route(); }
+      catch (e) { toast(e.message); }
+    });
 }
 
 // ---------- One endpoint: playground, API, logs ----------

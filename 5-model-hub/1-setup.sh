@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Model Hub, once per cluster: the modelhub account + MODELS_ROOT, the pod UID policy, one GPU DeviceClass
-# per Slurm GPU type, and DynamicResources in slurm-bridge's scheduler (rerun after every slurm-bridge helm upgrade).
+# per Slurm GPU type, DynamicResources in slurm-bridge's scheduler (rerun after every slurm-bridge helm upgrade),
+# model-register and the public-models timer.
 # Safe to rerun. Per-user parts (namespace, quota, kubeconfig) are 2-sync-users.sh.
 # Run on master: sudo bash 1-setup.sh
 set -euo pipefail
@@ -69,11 +70,41 @@ sed -e "s#@MODELS_ROOT@#$MODELS_ROOT#g" -e "s#@APPTAINER@#$APPTAINER#g" \
     -e "s#@ML_TRAIN_SIF@#$ML_TRAIN_SIF#g" -e "s#@MLFLOW_URI@#$MLFLOW_URI#g" "$HERE/model-register" > /home/apps/bin/model-register.new
 chmod 755 /home/apps/bin/model-register.new && mv /home/apps/bin/model-register.new /home/apps/bin/model-register
 
-echo "== 7. Check"
+echo "== 7. Public models: root timer (public-models.py: MLflow read access + copies of the files)"
+install -d -m 755 -o "$MODELHUB_UID" -g "$MODELHUB_UID" "$MODELS_ROOT/public"
+install -D -m 755 -o root -g root "$HERE/public-models.py" /usr/local/lib/model-hub/public-models.py
+cat > /etc/systemd/system/model-hub-public.service <<EOF
+[Unit]
+Description=Model Hub: public models (MLflow read access, copies of the files)
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment="MLFLOW_URI=$MLFLOW_URI" "LDAP_BASE=$LDAP_BASE" "MODELS_ROOT=$MODELS_ROOT" "MLFLOW_DATA=$MLFLOW_DATA"
+Environment="MODELHUB_USER=$MODELHUB_USER" "MLFLOW_USER=$MLFLOW_USER"
+ExecStart=/usr/bin/python3 /usr/local/lib/model-hub/public-models.py
+EOF
+cat > /etc/systemd/system/model-hub-public.timer <<EOF
+[Unit]
+Description=Model Hub: public models, 1 minute after the last run ended
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl enable --now model-hub-public.timer
+systemctl start model-hub-public.service || { journalctl -u model-hub-public -n 20 --no-pager; exit 1; }
+journalctl -u model-hub-public -n 5 --no-pager -o cat
+
+echo "== 8. Check"
 kubectl get validatingadmissionpolicy,validatingadmissionpolicybinding pod-runs-as-namespace-owner
 kubectl get deviceclass -o custom-columns=CLASS:.metadata.name,MAPS:.spec.extendedResourceName
 kubectl -n "$BRIDGE_NS" get cm scheduler-config -o jsonpath='{.data.scheduler-config\.yaml}' | grep -A2 'multiPoint:'
-grep -q @ /home/apps/bin/model-register && echo "WARNING: model-register still has an unfilled @VAR@" >&2
+grep -qE "@[A-Z_]+@" /home/apps/bin/model-register && echo "WARNING: model-register still has an unfilled @VAR@" >&2
 echo
 echo "Next: put base models under $MODELS_ROOT/base (as $MODELHUB_USER), then sudo bash 2-sync-users.sh"
 echo "Admin base model: model-register $MODELS_ROOT/base/<org>/<model> <name> (as yourself, not sudo)"

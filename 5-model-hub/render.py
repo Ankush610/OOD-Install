@@ -2,8 +2,9 @@
 """Render one Model Hub endpoint (Secret + Pod + Service) for `kubectl apply -f -`, as the user.
 
 Two runtimes:
-  mlflow  classic ML / DL registered in MLflow. An initContainer downloads `models:/<name>/<version>` with the
-          user's MLflow token (Secret mlflow-creds), then `mlflow models serve` answers /invocations.
+  mlflow  classic ML / DL registered in MLflow. An initContainer downloads `models:/<name>/<version>` (or, for
+          someone else's public model, its public copy: download_uri) with the user's MLflow token (Secret
+          mlflow-creds), then `mlflow models serve` answers /invocations.
   vllm    LLM folder on disk (MODELS_ROOT or ~/models, read-only PVCs). OpenAI API, needs an API key.
 
 Every pod runs as the user (the UID policy insists), goes through slurm-bridge (a Slurm job with a time limit,
@@ -77,7 +78,8 @@ def endpoint(runtime, p):
         volumes.append({"name": "model", "emptyDir": {}})
         init.append({
             "name": "download", "image": p["image"], "securityContext": ctr_sec,
-            "command": ["mlflow", "artifacts", "download", "--artifact-uri", p["model_uri"], "--dst-path", "/model"],
+            "command": ["mlflow", "artifacts", "download", "--artifact-uri", p.get("download_uri") or p["model_uri"],
+                        "--dst-path", "/model"],
             "env": env + creds + [{"name": "MLFLOW_TRACKING_URI", "value": p["mlflow_uri"]}],
             "volumeMounts": mounts, "resources": {"limits": {"cpu": "1", "memory": "2Gi"}},
         })
@@ -140,6 +142,9 @@ def test():
     assert dep["metadata"]["annotations"]["slurmjob.slinky.slurm.net/exclusive"] == "false"
     assert "ownerReferences" not in dep["metadata"] and m[1]["metadata"]["annotations"]["model-hub/expires"]
     assert dep["spec"]["initContainers"][0]["command"][:3] == ["mlflow", "artifacts", "download"]
+    pub = endpoint("mlflow", {**base, "download_uri": "mlflow-artifacts:/9/alice/churn/v1"})["items"][0]
+    assert "mlflow-artifacts:/9/alice/churn/v1" in pub["spec"]["initContainers"][0]["command"]   # someone else's public model
+    assert pub["metadata"]["annotations"]["model-hub/model"] == "models:/churn/1"                 # still listed as churn v1
     env = {e["name"]: e.get("value") for e in dep["spec"]["containers"][0]["env"]}
     assert env["USER"] == env["LOGNAME"] == "alice"          # getpass.getuser() works without a passwd entry
     v = endpoint("vllm", {**base, "name": "qwen", "image": "r/vllm:1", "model_path": "/models/base/q", "gpu_type": "a30"})["items"]
@@ -147,6 +152,7 @@ def test():
     vd = v[1]
     assert vd["spec"]["containers"][0]["resources"]["limits"]["nvidia.com/gpu"] == "1"
     assert "--enable-lora" not in vd["spec"]["containers"][0]["args"]
+    assert "--trust-remote-code" not in vd["spec"]["containers"][0]["args"]   # a public LLM must not run its owner's code
     lora = endpoint("vllm", {**base, "name": "q2", "image": "i", "model_path": "/my-models/x/v1",
                              "base_path": "/models/base/q", "gpu_type": "a30"})["items"][1]
     assert "--enable-lora" in lora["spec"]["containers"][0]["args"]

@@ -13,9 +13,11 @@ import hashlib
 import json
 import mimetypes
 import os
+import posixpath
 import pwd
 import re
 import secrets
+import shutil
 import ssl
 import subprocess
 import sys
@@ -24,6 +26,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
 import yaml
 
@@ -41,6 +44,7 @@ NS = f"u-{USER}"
 KUBECONFIG = os.path.join(HOME, ".kube", "aistack.config")
 CREDS = os.path.join(HOME, ".mlflow", "credentials")
 PUBLIC = os.path.join(HERE, "public")
+DOWNLOADS = os.path.join(HOME, "model-downloads")           # "Download to my home folder" puts models here
 API = SITE["mlflow_uri"].rstrip("/") + "/api/2.0"
 
 
@@ -58,10 +62,15 @@ def mlflow_creds():
     return kv.get("mlflow_tracking_username", ""), kv.get("mlflow_tracking_password", "")
 
 
-def mlflow(path, params=None, raw=False):
-    url = API + path + ("?" + urllib.parse.urlencode(params, doseq=True) if params else "")
-    req = urllib.request.Request(url)
-    req.add_header("Authorization", "Basic " + base64.b64encode(":".join(mlflow_creds()).encode()).decode())
+def basic_auth():
+    return "Basic " + base64.b64encode(":".join(mlflow_creds()).encode()).decode()
+
+
+def mlflow(path, params=None, raw=False, body=None):
+    """GET, or POST when body is given. Paths are under /api/2.0, except "/3.0/..." (MLflow's newer permission API)."""
+    url = (API[:-4] if path.startswith("/3.0/") else API) + path + ("?" + urllib.parse.urlencode(params, doseq=True) if params else "")
+    req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json", "Authorization": basic_auth()})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             data = r.read()
@@ -91,14 +100,28 @@ def list_models():
 
 def model_version(name, version):
     v = mlflow("/mlflow/model-versions/get", {"name": name, "version": version})["model_version"]
-    vt = tags(v)
+    vt, mt = tags(v), tags(mlflow("/mlflow/registered-models/get", {"name": name})["registered_model"])
+    # Someone else's public model: its files come from the copy public-models.py made (the owner's own files stay
+    # private to them). "owner" is set by that timer too, only on public models, before anyone else gets access:
+    # no owner tag yet = only the owner can see it.
+    public = mt.get("public") == "true"
+    mine = not public or mt.get("owner", USER) == USER
+    copy = None if mine else vt.get("public_copy") if vt.get("public_status") == "ready" else ""
+    if copy == "":
+        st = vt.get("public_status", "")
+        raise Fail(409, f"{name} v{version} is public, but its files " + (
+            f"couldn't be shared ({st[7:]}). Ask its owner, {mt.get('owner', '?')}." if st.startswith("error:")
+            else "are still being copied for everyone. Try again in a minute."))
     info = {"name": name, "version": int(version), "tags": vt, "run_id": v.get("run_id"),
-            "created": v.get("creation_timestamp"), "description": v.get("description", "")}
+            "created": v.get("creation_timestamp"), "description": v.get("description", ""),
+            "public": public, "owner": mt.get("owner") if public else USER, "mine": mine,
+            "public_status": vt.get("public_status") if public else None}
     if vt.get("path"):                                       # an LLM folder registered with model-register
-        info.update(kind="LLM", runtime="vllm", path=vt["path"], format=vt.get("format", "hf"))
+        info.update(kind="LLM", runtime="vllm", path=copy or vt["path"], format=vt.get("format", "hf"))
         return info
     # the MLmodel file says which flavor it is and what goes in / comes out
-    uri = mlflow("/mlflow/model-versions/get-download-uri", {"name": name, "version": version})["artifact_uri"]
+    uri = copy or mlflow("/mlflow/model-versions/get-download-uri", {"name": name, "version": version})["artifact_uri"]
+    info["download_uri"] = copy or f"models:/{name}/{version}"
     rel = re.sub(r"^mlflow-artifacts:/+", "", uri).rstrip("/")
     mlmodel = yaml.safe_load(mlflow(f"/mlflow-artifacts/artifacts/{urllib.parse.quote(rel)}/MLmodel", raw=True))
     flavors = sorted(k for k in (mlmodel.get("flavors") or {}) if k != "python_function")
@@ -109,6 +132,27 @@ def model_version(name, version):
                 image="torch" if torch else "ml", inputs=parse(sig.get("inputs")), outputs=parse(sig.get("outputs")),
                 artifacts=rel, size=mlmodel.get("model_size_bytes"), model_id=v.get("model_id"))
     return info
+
+
+def can_manage(name):
+    """Owner (MANAGE) of this model? Only they get Make public / Make private."""
+    rows = mlflow("/3.0/mlflow/users/current/permissions").get("permissions", [])
+    return any(r.get("resource_type") == "registered_model" and r.get("resource_pattern") == name
+               and r.get("permission") == "MANAGE" for r in rows)
+
+
+def set_public(name, body):
+    """Only the tag: public-models.py (root, every minute) copies the files and gives or takes read access.
+    MLflow itself checks that this user may change the model's tags."""
+    if not can_manage(name):
+        raise Fail(403, "only the model's owner can change this")
+    on = bool(body.get("public"))
+    if on and "'" not in name:                                # (a quote doesn't fit MLflow's filter; the timer skips those)
+        for v in mlflow("/mlflow/model-versions/search", {"filter": f"name = '{name}'", "max_results": 1000}).get("model_versions", []):
+            mlflow("/mlflow/model-versions/set-tag", body={"name": name, "version": v["version"], "key": "public_status",
+                                                         "value": "waiting"})
+    mlflow("/mlflow/registered-models/set-tag", body={"name": name, "key": "public", "value": "true" if on else "false"})
+    return {"public": on}
 
 
 def lib_check(requirements, image_libs):
@@ -141,9 +185,21 @@ def safetensors_params(folder):
     return total or None
 
 
+def du(path):
+    """Bytes in a folder (0 if it's gone); files may come and go while it's being written."""
+    total = 0
+    for d, _, fs in os.walk(path):
+        for f in fs:
+            try:
+                total += os.path.getsize(os.path.join(d, f))
+            except OSError:
+                pass
+    return total
+
+
 def llm_card(path):
     """What the folder says about an LLM: size on disk, architecture, context length, LoRA base."""
-    out = {"size": sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(path) for f in fs)}
+    out = {"size": du(path)}
     cfg = os.path.join(path, "config.json")
     if os.path.isfile(cfg):
         c = json.load(open(cfg))
@@ -162,6 +218,7 @@ def model_card(name, version):
     """model_version + what helps pick a version: the run (metrics, params, who, where), size, library check.
     Each extra is best effort: a missing piece leaves a gap on the page, never an error."""
     info = model_version(name, version)
+    info["can_manage"] = info["mine"] and can_manage(name)
     def tryit(fn):
         try:
             return fn()
@@ -188,6 +245,130 @@ def model_card(name, version):
                                    raw=True).decode())
         info["libs"] = lib_check(req, SITE.get("image_libs", {}).get(info["image"], {})) if req else None
     return info
+
+
+# ---------- download: as the user, through MLflow (ML / DL) or from the folder (LLM) ----------
+def artifact_files(rel, sub=""):
+    """[(path inside the model, size)] of every file under an MLflow artifact folder (MLflow lists one level)."""
+    out = []
+    for f in mlflow("/mlflow-artifacts/artifacts", {"path": posixpath.join(rel, sub) if sub else rel}).get("files", []):
+        p = posixpath.join(sub, f["path"])
+        out += artifact_files(rel, p) if f.get("is_dir") else [(p, int(f.get("file_size") or 0))]
+    return out
+
+
+def artifact_open(rel, p):
+    req = urllib.request.Request(API + "/mlflow-artifacts/artifacts/" + urllib.parse.quote(posixpath.join(rel, p)),
+                                 headers={"Authorization": basic_auth()})
+    return urllib.request.urlopen(req, timeout=60)
+
+
+class _Sink:
+    """zipfile writes here; the WSGI response hands out what piled up (zipfile streams to anything with write())."""
+    def __init__(self):
+        self.buf = []
+
+    def write(self, b):
+        self.buf.append(bytes(b))
+        return len(b)
+
+    def flush(self):
+        pass
+
+    def take(self):
+        out, self.buf = b"".join(self.buf), []
+        return out
+
+
+def zip_stream(rel, files):
+    sink = _Sink()
+    with zipfile.ZipFile(sink, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as z:
+        for p, _ in files:
+            with artifact_open(rel, p) as r, z.open(p, "w", force_zip64=True) as f:
+                while True:
+                    chunk = r.read(1 << 20)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    yield sink.take()
+    yield sink.take()
+
+
+def download_dir(name, version):
+    return os.path.join(DOWNLOADS, re.sub(r"[^A-Za-z0-9._-]+", "_", name), f"v{int(version)}")
+
+
+def download_state(name, version):
+    """none | running | done | error, from what's on disk: <dir>.part while it runs (+ <dir>.pid, <dir>.total = bytes
+    to fetch, for the progress bar), <dir> when done."""
+    d = download_dir(name, version)
+    out = {"path": d}
+    if os.path.isdir(d):
+        return {**out, "state": "done"}
+    if os.path.isdir(d + ".part"):
+        try:
+            os.kill(int(open(d + ".pid").read()), 0)
+            try:
+                total = int(open(d + ".total").read())
+            except (OSError, ValueError):                    # not counted yet
+                total = None
+            return {**out, "state": "running", "done": du(d + ".part"), "total": total}
+        except (OSError, ValueError):
+            return {**out, "state": "error", "error": "it stopped before it finished; try again"}
+    if os.path.isfile(d + ".error"):
+        return {**out, "state": "error", "error": open(d + ".error").read()}
+    return {**out, "state": "none"}
+
+
+def start_download(name, version):
+    """Starts a copy into the user's home that outlives this request (an LLM can be 100+ GB)."""
+    info = model_version(name, version)
+    st = download_state(name, version)
+    if st["state"] in ("done", "running"):
+        return st
+    d = st["path"]
+    for leftover in (d + ".error", d + ".pid", d + ".total"):
+        if os.path.exists(leftover):
+            os.remove(leftover)
+    shutil.rmtree(d + ".part", ignore_errors=True)
+    os.makedirs(d + ".part")
+    kind, src = ("folder", info["path"]) if info["runtime"] == "vllm" else ("mlflow", info["artifacts"])
+    p = subprocess.Popen([sys.executable or "python3", os.path.abspath(__file__), "--fetch", kind, src, d], cwd=HOME,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    with open(d + ".pid", "w") as f:
+        f.write(str(p.pid))
+    return {**download_state(name, version), "state": "running"}
+
+
+def fetch(kind, src, dest):
+    """The background half of start_download (python3 passenger_wsgi.py --fetch ...): dest.part -> dest when complete,
+    or dest.error with the reason."""
+    part = dest + ".part"
+    try:
+        files = None if kind == "folder" else artifact_files(src)
+        with open(dest + ".total", "w") as f:
+            f.write(str(du(src) if files is None else sum(n for _, n in files)))
+        if kind == "folder":
+            shutil.rmtree(part)
+            shutil.copytree(src, part)                       # the user's own rights: only what they may read
+        else:
+            for p, _ in files:
+                out = os.path.normpath(os.path.join(part, p))
+                if not out.startswith(part + os.sep):
+                    raise ValueError(f"bad file name {p!r}")
+                os.makedirs(os.path.dirname(out), exist_ok=True)
+                with artifact_open(src, p) as r, open(out, "wb") as f:
+                    shutil.copyfileobj(r, f, 1 << 20)
+        os.rename(part, dest)
+    except Exception as e:                                   # anything: the page shows it
+        shutil.rmtree(part, ignore_errors=True)
+        with open(dest + ".error", "w") as f:
+            f.write(str(e)[:500] or type(e).__name__)
+    finally:
+        for f in (dest + ".pid", dest + ".total"):
+            if os.path.exists(f):
+                os.remove(f)
 
 
 # ---------- Kubernetes (kubectl, the user's kubeconfig) ----------
@@ -251,7 +432,7 @@ def deploy(body):
         if info["image"] == "ml":
             p["gpus"] = 0                                     # classic ML is CPU only
         p.update(image=SITE["images"][info["image"]], model_uri=f"models:/{name}/{version}",
-                 mlflow_uri=SITE["mlflow_uri"])
+                 download_uri=info["download_uri"], mlflow_uri=SITE["mlflow_uri"])
         ensure_mlflow_secret()
     try:
         manifest = render.endpoint(info["runtime"], {k: str(v) for k, v in p.items()})
@@ -456,6 +637,13 @@ def route(method, path, body):
         return list_models()
     if method == "GET" and len(a) == 3 and a[0] == "models":
         return model_card(a[1], a[2])
+    if method == "POST" and len(a) == 3 and a[0] == "models" and a[2] == "public":
+        return set_public(a[1], body)
+    if len(a) == 4 and a[0] == "models" and a[3] == "download":
+        if method == "GET":
+            return download_state(a[1], a[2])
+        if method == "POST":
+            return start_download(a[1], a[2])
     if method == "POST" and a == ["deploy"]:
         return deploy(body)
     if method == "GET" and a == ["endpoints"]:
@@ -486,6 +674,11 @@ def static(path, script_name):
         return open(full, "rb").read(), mimetypes.guess_type(full)[0] or "application/octet-stream"
     base = (script_name.rstrip("/") + "/").encode()           # -> /pun/sys/model_hub/
     data = open(os.path.join(HERE, "index.html"), "rb").read()
+    # nginx serves app.js / style.css with no cache rule, so browsers keep an old copy for a while after an update
+    # (heuristic caching). A ?v=<file time> makes a new install load at once; index.html itself is never cached.
+    for f in (b"app.js", b"style.css"):
+        v = str(int(os.path.getmtime(os.path.join(PUBLIC, f.decode())))).encode()
+        data = data.replace(b'"' + f + b'"', b'"' + f + b"?v=" + v + b'"')
     return data.replace(b"<head>", b'<head>\n  <base href="' + base + b'">', 1), "text/html"
 
 
@@ -501,6 +694,16 @@ def application(environ, start_response):
             start_response("200 OK", [("Content-Type", "application/octet-stream"),
                                       ("Content-Disposition", 'attachment; filename="gateway-ca.crt"')])
             return [open(ca, "rb").read()]
+        parts = [urllib.parse.unquote(p) for p in path.strip("/").split("/")]
+        if method == "GET" and len(parts) == 5 and parts[:2] == ["api", "models"] and parts[4] == "zip":
+            info = model_version(parts[2], parts[3])
+            if info["runtime"] == "vllm":
+                raise Fail(400, "chat models are too big for the browser: download them to your home folder")
+            files = artifact_files(info["artifacts"])         # errors here still become a normal error reply
+            fname = re.sub(r"[^A-Za-z0-9._-]+", "_", parts[2]) + f"-v{int(parts[3])}.zip"
+            start_response("200 OK", [("Content-Type", "application/zip"),
+                                      ("Content-Disposition", f'attachment; filename="{fname}"')])
+            return zip_stream(info["artifacts"], files)
         result = route(method, path, body)
         if result is None:
             data, ctype = static(path, environ.get("SCRIPT_NAME", ""))
@@ -513,3 +716,7 @@ def application(environ, start_response):
         status, payload = "400 Bad Request", {"error": f"bad request: {e}"}
     start_response(status, [("Content-Type", "application/json"), ("Cache-Control", "no-store")])
     return [json.dumps(payload).encode()]
+
+
+if __name__ == "__main__" and sys.argv[1:2] == ["--fetch"]:
+    fetch(*sys.argv[2:5])
