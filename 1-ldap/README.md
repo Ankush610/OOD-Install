@@ -13,7 +13,22 @@ One user list for the whole cluster: **389 Directory Server** on master, **SSSD*
 
 Ports 389/636 only, so no clash with OOD on 80/443. All settings come from `../site.conf`.
 
-## Run
+## Everyday: the menu
+
+```bash
+sudo bash menu.sh
+```
+
+One menu (whiptail) for everything below. Each action runs the script it names, so it does exactly the same; the script's output shows in the terminal, then you're back in the menu.
+
+| Menu | What's in it |
+|---|---|
+| People and passwords | list people (UID, home, teams), add a person (`add-user.sh`), set a new password, test a password |
+| Teams | list, create, add / remove members (a checklist: tick who's in), delete (`group.sh`) |
+| Check | LDAP server answers; this node sees LDAP users; **local copies**: every node's `/etc/passwd` (master + `COMPUTE_NODES`, over `ssh root@`) against LDAP. A local account with an LDAP person's name wins on that node (`nsswitch: files sss`): a wrong home there breaks jobs (seen 2026-10-08: cn01 had `rakesh` with `/home/ankush`, so MLflow found no login in jobs), and the old local password keeps working after a change. Ticked = differs from LDAP; remove = `userdel` **without `-r`** (the home stays), `/etc/subuid`+`subgid` ranges put back |
+| Setup | `1-server.sh`, `2-client.sh` on this node or another one (ssh), `import-local-users.sh` (dry run first) |
+
+## Run by hand
 
 ```bash
 sudo bash 1-server.sh                        # on master: 389 DS, the tree, access rules, CA -> LDAP_CA
@@ -21,7 +36,6 @@ sudo bash import-local-users.sh --dry-run    # optional, see below
 sudo bash 2-client.sh                        # on master, then as root on every compute node
 sudo bash add-user.sh <name>                 # on master: each new person
 sudo bash group.sh create nlp; sudo bash group.sh add nlp bob carol   # teams (Model Hub sharing); list / remove / delete
-sudo bash passwords.sh                       # menu: list users, set a new password, test a password
 ```
 
 `2-client.sh` runs on the compute nodes straight from this folder, because it's on the shared `/home`. It checks for UID clashes before it changes anything, then switches the node to SSSD (`authselect`), and checks with `getent -s sss`, which asks LDAP only.
@@ -40,7 +54,7 @@ sudo bash passwords.sh                       # menu: list users, set a new passw
 | `2-client.sh` | UID clash check, `sssd.conf` (rfc2307, ldaps, CA pinned, `root:root 0600`), `authselect select sssd with-mkhomedir` |
 | `add-user.sh` | next free UID, user + own group, `ldappasswd -S`, home dir, subuid/subgid on login nodes, MLflow token |
 | `group.sh` | teams: `groupOfNames` under `ou=Groups` without `posixGroup` (no gidNumber: not Linux groups, no file rights); create / add / remove / delete / list; re-syncs the people concerned into Model Hub (`aistack/teams` on their namespace) |
-| `passwords.sh` | menu (whiptail): list LDAP users, set a new password (`ldappasswd -T`, as the Directory Manager), test one (`ldapwhoami`); can't show a password, LDAP keeps only the hash |
+| `menu.sh` | the menu above (whiptail). Passwords: set (`ldappasswd -T`, as the Directory Manager), test (`ldapwhoami`); nobody can see one, LDAP keeps only the hash |
 | `import-local-users.sh` | optional: local users -> LDAP with the same UID and password hash, then checks each UID |
 
 Access rules: anyone may **read** users and groups except passwords (SSSD needs this), and each user may **change their own password**. Only the Directory Manager can add or delete. Its password is in `LDAP_DM_PASS_FILE` (`/root/.ldap-dm.pass`).
@@ -68,6 +82,6 @@ sudo sss_cache -E                          # forget cached users after a change
 | `2-client.sh`: `SSSD cannot see LDAP users` | CA not trusted, or `MASTER_HOST` doesn't resolve on that node | `LDAPTLS_CACERT=<LDAP_CA> ldapsearch -x -H ldaps://<MASTER_HOST> -b <LDAP_BASE> -s base`; check `/etc/hosts`; `journalctl -u sssd` |
 | Slurm job: `Couldn't determine user account information: user: unknown userid <uid>` | the compute node doesn't know the user: `2-client.sh` not run there | `sudo bash 2-client.sh` on that node; check with `srun -w <node> id <name>` |
 | user sees their files owned by a bare number | their LDAP UID differs from the old local one | set `uidNumber` in LDAP to the old value, then `sss_cache -E` |
-| `ldappasswd`: `Confidentiality required (13)`, `Operation requires a secure connection` | 389 DS only changes passwords over an encrypted connection; `ldap://localhost` is plain | use `-H ldaps://<MASTER_HOST>` with `LDAPTLS_CACERT=<LDAP_CA>` (`passwords.sh`, `add-user.sh` do) |
+| `ldappasswd`: `Confidentiality required (13)`, `Operation requires a secure connection` | 389 DS only changes passwords over an encrypted connection; `ldap://localhost` is plain | use `-H ldaps://<MASTER_HOST>` with `LDAPTLS_CACERT=<LDAP_CA>` (`menu.sh`, `add-user.sh` do) |
 | imported user can't log in | the account was locked locally (`!!`), so no password was copied | set one with `ldappasswd … -S` |
 | undo on one node | | `authselect select local --force; systemctl stop sssd` |
