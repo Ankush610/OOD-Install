@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Install the "MLflow (shared)" OOD page: server status, tracking URI + Copy, Open MLflow.
+# Install the "MLflow (shared)" OOD page: server status, tracking URI + Copy, experiment naming (<user>/<name>),
+# what 401 / 403 mean, Open MLflow.
 # Run on master after ../2-ood: sudo bash 4-install-ood-app.sh     then Restart Web Server in OOD
 set -euo pipefail
 

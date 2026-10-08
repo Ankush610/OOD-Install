@@ -25,10 +25,13 @@ def row(ok, title, hint):
 def application(environ, start_response):
     server_ok, creds_ok = up(), os.path.isfile(CREDS)
     export = html.escape(f"export MLFLOW_TRACKING_URI={URI}")
+    user = html.escape(USER)
+    exp_py = html.escape(f'mlflow.set_experiment("{USER}/my-experiment")')
+    exp_sh = html.escape(f'export MLFLOW_EXPERIMENT_NAME="{USER}/my-experiment"')
     status = row(server_ok, "MLflow server", "Running" if server_ok else
-                 "Not answering. Tell the admin (kubectl -n mlflow get pod).")
+                 "Not answering right now. Contact your administrator.")
     status += row(creds_ok, "Job login", "Set up in <code>~/.mlflow/credentials</code>" if creds_ok else
-                  "No <code>~/.mlflow/credentials</code>. Ask the admin to run 3-mlflow/3-sync-tokens.sh.")
+                  "Not set up for your account. Contact your administrator.")
     ui_note = ("Opens through OnDemand: you are already logged in." if SSO else
                f"Opens MLflow on port {PORT}, not through OnDemand (OnDemand drops the password, so MLflow would "
                f"always refuse). Log in with your cluster (SSH) username and password. If it doesn't open, your "
@@ -62,17 +65,37 @@ def application(environ, start_response):
     <div class="eyebrow mb-3">Use it in your jobs</div>
     <ol class="steps">
       <li><div class="fw-medium mb-2">Set the tracking address in your job script</div>
-        <div class="code-wrap"><pre class="code mb-0" id="uri">{export}</pre>
-          <button class="btn btn-sm btn-outline-secondary btn-copy" type="button" onclick="navigator.clipboard.writeText(document.getElementById('uri').textContent);this.innerHTML='<i class=\\'bi bi-check2\\'></i> Copied'"><i class="bi bi-clipboard"></i> Copy</button></div>
+        <div class="code-wrap"><pre class="code mb-0" id="uri">{export}</pre><button class="btn btn-sm btn-outline-secondary btn-copy" type="button" data-copy="uri"><i class="bi bi-clipboard"></i> Copy</button></div>
         <div class="small text-body-secondary mt-2">It never changes, so you can keep it in your scripts.</div></li>
+      <li><div class="fw-medium mb-1">Name your experiment <span class="font-monospace">{user}/&hellip;</span></div>
+        <div class="small text-body-secondary mb-2">Experiment names are shared across the cluster. Starting with your username keeps yours unique.</div>
+        <div class="code-wrap mb-2"><pre class="code mb-0" id="exp-py">{exp_py}</pre><button class="btn btn-sm btn-outline-secondary btn-copy" type="button" data-copy="exp-py"><i class="bi bi-clipboard"></i> Copy</button></div>
+        <div class="code-wrap"><pre class="code mb-0" id="exp-sh">{exp_sh}</pre><button class="btn btn-sm btn-outline-secondary btn-copy" type="button" data-copy="exp-sh"><i class="bi bi-clipboard"></i> Copy</button></div></li>
       <li><div class="fw-medium">Log runs as usual</div>
         <div class="small text-body-secondary">Your jobs log in with a token from <code>~/.mlflow/credentials</code>, so no password goes into your scripts.</div></li>
     </ol></div></div>
+  <div class="card mb-4"><div class="card-body">
+    <div class="eyebrow mb-3">If something goes wrong</div>
+    <dl class="mb-0 small">
+      <dt class="fw-semibold"><code>401</code> &middot; Not authenticated</dt>
+      <dd class="text-body-secondary mb-3">MLflow doesn't know who you are. Usually your job can't find your login: check that
+        <b>Job login</b> above says OK.</dd>
+      <dt class="fw-semibold"><code>403</code> &middot; Permission denied</dt>
+      <dd class="text-body-secondary mb-3">You're logged in, but it isn't yours. Usually the experiment name is already used by
+        someone else: use <code>{user}/&hellip;</code></dd>
+      <dt class="fw-semibold"><code>404</code> &middot; Not found</dt>
+      <dd class="text-body-secondary mb-3">The address, experiment or model name is wrong. Check for typos.</dd>
+      <dt class="fw-semibold">Connection refused or timed out</dt>
+      <dd class="text-body-secondary mb-0">MLflow can't be reached. Check the tracking address, and that <b>MLflow server</b> above says OK.</dd>
+    </dl></div></div>
   <div class="card"><div class="card-body">
     <div class="eyebrow mb-2">Web UI</div>
     <p class="small text-body-secondary mb-0">{ui_note}</p></div></div>
 </main>
 <script>
+const $=id=>document.getElementById(id);
+document.querySelectorAll('[data-copy]').forEach(b=>b.onclick=()=>navigator.clipboard.writeText($(b.dataset.copy).textContent)
+  .then(()=>{{b.innerHTML='<i class="bi bi-check2"></i> Copied';setTimeout(()=>b.innerHTML='<i class="bi bi-clipboard"></i> Copy',1500)}}));
 const t=document.getElementById('theme'),ic=()=>t.innerHTML='<i class="bi bi-'+(document.documentElement.dataset.bsTheme==='dark'?'sun':'moon-stars')+'"></i>';ic();
 t.onclick=()=>{{const v=document.documentElement.dataset.bsTheme==='dark'?'light':'dark';document.documentElement.dataset.bsTheme=v;ic();try{{localStorage.setItem('mh-theme',v)}}catch(e){{}}}};
 </script></body></html>""".encode()]

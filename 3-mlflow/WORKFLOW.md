@@ -107,6 +107,12 @@ The server runs with `default_permission = NO_PERMISSIONS`, so everything is pri
 
 To share on purpose, the owner (or the admin) grants **READ**, **EDIT** or **MANAGE** on the experiment or model in the MLflow UI.
 
+**Experiment names are shared by everyone, and a name belongs to whoever used it first.** Since you can't see other
+people's experiments, a name can look free and still be taken: then MLflow answers `403 Permission denied`. So name
+experiments **`<username>/<name>`** (`mlflow.set_experiment("ankush/mnist")`, or `export MLFLOW_EXPERIMENT_NAME=ankush/mnist`
+in the job script). `/` can't be in a username, so two people can never clash. The OOD page **MLflow (shared)** shows
+this as step 2, with the user's own name filled in.
+
 ## 6. Where everything lives
 
 | What | Where |
