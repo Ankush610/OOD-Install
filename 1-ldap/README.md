@@ -21,6 +21,7 @@ sudo bash import-local-users.sh --dry-run    # optional, see below
 sudo bash 2-client.sh                        # on master, then as root on every compute node
 sudo bash add-user.sh <name>                 # on master: each new person
 sudo bash group.sh create nlp; sudo bash group.sh add nlp bob carol   # teams (Model Hub sharing); list / remove / delete
+sudo bash passwords.sh                       # menu: list users, set a new password, test a password
 ```
 
 `2-client.sh` runs on the compute nodes straight from this folder, because it's on the shared `/home`. It checks for UID clashes before it changes anything, then switches the node to SSSD (`authselect`), and checks with `getent -s sss`, which asks LDAP only.
@@ -39,6 +40,7 @@ sudo bash group.sh create nlp; sudo bash group.sh add nlp bob carol   # teams (M
 | `2-client.sh` | UID clash check, `sssd.conf` (rfc2307, ldaps, CA pinned, `root:root 0600`), `authselect select sssd with-mkhomedir` |
 | `add-user.sh` | next free UID, user + own group, `ldappasswd -S`, home dir, subuid/subgid on login nodes, MLflow token |
 | `group.sh` | teams: `groupOfNames` under `ou=Groups` without `posixGroup` (no gidNumber: not Linux groups, no file rights); create / add / remove / delete / list; re-syncs the people concerned into Model Hub (`aistack/teams` on their namespace) |
+| `passwords.sh` | menu (whiptail): list LDAP users, set a new password (`ldappasswd -T`, as the Directory Manager), test one (`ldapwhoami`); can't show a password, LDAP keeps only the hash |
 | `import-local-users.sh` | optional: local users -> LDAP with the same UID and password hash, then checks each UID |
 
 Access rules: anyone may **read** users and groups except passwords (SSSD needs this), and each user may **change their own password**. Only the Directory Manager can add or delete. Its password is in `LDAP_DM_PASS_FILE` (`/root/.ldap-dm.pass`).
@@ -49,7 +51,7 @@ Access rules: anyone may **read** users and groups except passwords (SSSD needs 
 getent passwd <name>                       # Linux view (local or LDAP)
 getent -s sss passwd <name>                # LDAP only, via SSSD
 ldapsearch -x -H ldap://localhost -b ou=People,<LDAP_BASE> uid=<name>
-sudo ldappasswd -x -H ldap://localhost -D "cn=Directory Manager" -y /root/.ldap-dm.pass -S uid=<name>,ou=People,<LDAP_BASE>
+sudo LDAPTLS_CACERT=<LDAP_CA> ldappasswd -x -H ldaps://<MASTER_HOST> -D "cn=Directory Manager" -y /root/.ldap-dm.pass -S uid=<name>,ou=People,<LDAP_BASE>   # ldaps: password changes are refused on plain ldap
 ldapwhoami -x -H ldaps://<MASTER_HOST> -D uid=<name>,ou=People,<LDAP_BASE> -W     # test a password
 sudo sss_cache -E                          # forget cached users after a change
 ```
@@ -66,5 +68,6 @@ sudo sss_cache -E                          # forget cached users after a change
 | `2-client.sh`: `SSSD cannot see LDAP users` | CA not trusted, or `MASTER_HOST` doesn't resolve on that node | `LDAPTLS_CACERT=<LDAP_CA> ldapsearch -x -H ldaps://<MASTER_HOST> -b <LDAP_BASE> -s base`; check `/etc/hosts`; `journalctl -u sssd` |
 | Slurm job: `Couldn't determine user account information: user: unknown userid <uid>` | the compute node doesn't know the user: `2-client.sh` not run there | `sudo bash 2-client.sh` on that node; check with `srun -w <node> id <name>` |
 | user sees their files owned by a bare number | their LDAP UID differs from the old local one | set `uidNumber` in LDAP to the old value, then `sss_cache -E` |
+| `ldappasswd`: `Confidentiality required (13)`, `Operation requires a secure connection` | 389 DS only changes passwords over an encrypted connection; `ldap://localhost` is plain | use `-H ldaps://<MASTER_HOST>` with `LDAPTLS_CACERT=<LDAP_CA>` (`passwords.sh`, `add-user.sh` do) |
 | imported user can't log in | the account was locked locally (`!!`), so no password was copied | set one with `ldappasswd … -S` |
 | undo on one node | | `authselect select local --force; systemctl stop sssd` |

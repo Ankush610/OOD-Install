@@ -45,7 +45,8 @@ loginShell: /bin/bash
 EOF
 
 echo "== 3. Password (typed, never on the command line)"
-ldappasswd "${L[@]}" -S "uid=$U,ou=People,$LDAP_BASE"
+# 389 DS refuses password changes on a plain connection (error 13 "Confidentiality required"): ldaps
+LDAPTLS_CACERT="$LDAP_CA" ldappasswd -x -H "$LDAP_URI" -D "$LDAP_DM" -y "$LDAP_DM_PASS_FILE" -S "uid=$U,ou=People,$LDAP_BASE"
 
 echo "== 4. Home on the shared /home"
 install -d -m 700 -o "$ID" -g "$ID" "/home/$U"
