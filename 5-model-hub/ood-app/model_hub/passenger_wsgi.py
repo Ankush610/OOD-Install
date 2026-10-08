@@ -91,7 +91,9 @@ def list_models():
         r = mlflow("/mlflow/registered-models/search", {"max_results": 200, **({"page_token": token} if token else {})})
         for m in r.get("registered_models", []):
             versions = sorted((int(v["version"]) for v in m.get("latest_versions", [])), reverse=True)
-            out.append({"name": m["name"], "description": m.get("description", ""), "tags": tags(m),
+            # model-register tags each VERSION with path= (an LLM folder), not the model: look at the latest versions
+            llm = any(tags(v).get("path") for v in m.get("latest_versions", []))
+            out.append({"name": m["name"], "description": m.get("description", ""), "tags": tags(m), "llm": llm,
                         "updated": m.get("last_updated_timestamp"), "latest": versions[0] if versions else None})
         token = r.get("next_page_token")
         if not token:

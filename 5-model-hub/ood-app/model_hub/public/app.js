@@ -101,17 +101,21 @@ async function renderModels() {
     (list.length ? `<div class="d-flex flex-wrap align-items-center gap-3 mb-3">
       <div class="input-group" style="max-width:24rem"><span class="input-group-text bg-body"><i class="bi bi-search"></i></span>
         <input class="form-control border-start-0" id="q" type="search" placeholder="Search by name or description" aria-label="Search models"></div>
+      <select class="form-select w-auto" id="show" aria-label="Show">
+        <option value="">All models</option><option value="public">Public</option><option value="private">Private (only you)</option></select>
       <span class="small text-body-secondary ms-auto" id="count"></span></div>` : '') +
     `<div class="row g-3" id="grid"></div>`;
   const draw = () => {
     const q = ($('#q')?.value || '').toLowerCase();
-    const rows = list.filter(m => (m.name + ' ' + m.description).toLowerCase().includes(q));
+    const who = $('#show')?.value, pub = m => m.tags.public === 'true';
+    const rows = list.filter(m => (m.name + ' ' + m.description).toLowerCase().includes(q) &&
+      (!who || (who === 'public') === pub(m)));
     if ($('#count')) $('#count').textContent = `${rows.length} model${rows.length === 1 ? '' : 's'}`;
     $('#grid').innerHTML = rows.map(m => `<div class="col-md-6 col-xl-4">
         <a class="card h-100 text-decoration-none text-body model-card" href="#/model/${enc(m.name)}"><div class="card-body d-flex flex-column">
-          <div class="d-flex gap-3 align-items-center mb-3">${kindIcon(m.tags.path ? 'LLM' : '')}
+          <div class="d-flex gap-3 align-items-center mb-3">${kindIcon(m.llm ? 'LLM' : '')}
             <div class="min-w-0 me-auto"><div class="fw-semibold text-truncate" title="${h(m.name)}">${h(m.name)}</div>
-              <div class="small text-body-secondary">${m.tags.path ? 'Chat model' : 'Model'}${m.tags.public === 'true' && m.tags.owner && m.tags.owner !== ME.user ? ` · by ${h(m.tags.owner)}` : ''}</div></div>
+              <div class="small text-body-secondary">${m.llm ? 'Chat model' : 'Model'}${m.tags.public === 'true' && m.tags.owner && m.tags.owner !== ME.user ? ` · by ${h(m.tags.owner)}` : ''}</div></div>
             ${m.tags.public === 'true' ? pubBadge() : ''}
             <span class="badge rounded-pill bg-body-secondary text-body-secondary fw-medium">v${m.latest ?? '–'}</span></div>
           <p class="card-text small text-body-secondary clamp-2 mb-3">${h(m.description) || 'No description yet.'}</p>
@@ -119,7 +123,7 @@ async function renderModels() {
       || `<div class="col-12"><div class="card">${list.length ? empty('search', 'No matches', 'Try a different word.')
            : empty('box-seam', 'No models yet', 'Register a model in MLflow and it shows up here.<div class="mt-3"><a class="btn btn-primary" href="#/help">Show me how</a></div>')}</div></div>`;
   };
-  if ($('#q')) $('#q').oninput = draw;
+  if ($('#q')) $('#q').oninput = $('#show').onchange = draw;
   draw();
 }
 
