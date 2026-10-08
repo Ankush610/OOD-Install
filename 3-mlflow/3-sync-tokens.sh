@@ -34,7 +34,9 @@ for user in $users; do
   group=$(id -gn "$user")
   creds=$home/.mlflow/credentials
   old=$( [ -f "$creds" ] && awk -F' = ' '/^mlflow_tracking_password/{print $2}' "$creds" || true)
-  if [ -n "$old" ] && token_works "$user" "$old"; then
+  # only our own token is kept (48 hex chars): MLflow also takes the LDAP password, so a hand-written file with the
+  # password in it would "work" until the next password change, then break every job (seen 2026-10-08)
+  if [[ $old =~ ^[0-9a-f]{48}$ ]] && token_works "$user" "$old"; then
     echo "ok      $user"; continue
   fi
 
