@@ -1,0 +1,6 @@
+---
+name: Jupyter
+category: Interactive Apps
+subcategory: Servers
+description: JupyterLab in your browser, running as you, on your own files
+icon: fa://book

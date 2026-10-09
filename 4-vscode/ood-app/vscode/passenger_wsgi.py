@@ -1,9 +1,11 @@
-"""VS Code page: an OOD Passenger app that runs AS the logged-in user (stdlib only, system python3).
+"""VS Code / Jupyter page: an OOD Passenger app that runs AS the logged-in user (stdlib only, system python3).
+One page for both: site.json's "app" picks the texts below; each app brings its own job.sh.
 
 Launch = `sbatch job.sh` as the user, on the partition picked (same Slurm options as the old batch_connect form).
-job.sh writes ~/.vscode-sessions/<jobid>.json (host, port, password; mode 600) once code-server answers;
-Connect posts that password to code-server's login through OOD's /rnode proxy. Stop = scancel.
-Same look as Model Hub (its Bootstrap + style.css). site.json and job.sh come from ../../3-install-ood-app.sh.
+job.sh writes ~/.<app>-sessions/<jobid>.json (host, port, password; mode 600) once the server answers;
+Connect posts that password to the server's login through OOD's proxy. Stop = scancel.
+Same look as Model Hub (its Bootstrap + style.css). site.json and job.sh come from ../../3-install-ood-app.sh
+(VS Code) or ../../../7-jupyter/2-install-ood-app.sh (Jupyter).
 """
 import html
 import json
@@ -20,8 +22,29 @@ SITE = json.load(open(os.path.join(HERE, "site.json")))
 os.environ.setdefault("SLURM_CONF", SITE["slurm_conf"])
 ME = pwd.getpwuid(os.getuid())
 USER, HOME = ME.pw_name, ME.pw_dir
-DIR = os.path.join(HOME, ".vscode-sessions")
-JOB = "vscode"                   # Slurm job name: how the page finds its sessions
+# connect: how Connect sends the password: (method, url, field). code-server wants to sit at / (/rnode strips the
+# prefix) and takes a POSTed password. Jupyter knows its /node path (base_url in its job.sh); its login form needs an
+# _xsrf value we don't have, so it gets the token the standard way (?token=, which sets its login cookie).
+# note: the help line under the sessions.
+APPS = {
+    "vscode": dict(title="VS Code", icon="code-slash", light="Editor only",
+                   connect=("post", "/rnode/{host}/{port}/login", "password"),
+                   tagline="VS Code in your browser, running as you, on your own files.",
+                   note="Extensions and settings you add are kept in your home folder for next time. Heavy or long "
+                        "work belongs in <code>sbatch</code> from VS Code's terminal: it frees its CPUs and GPUs when "
+                        "done. An editor with no browser attached for {idle} minutes stops by itself."),
+    "jupyter": dict(title="Jupyter", icon="journal-code", light="Notebook only",
+                    connect=("get", "/node/{host}/{port}/lab", "token"),
+                    tagline="JupyterLab in your browser, running as you, on your own files.",
+                    note="Pick a kernel: the <b>(container)</b> ones are the training containers (PyTorch, "
+                         "classic ML), with the GPUs of a GPU session. Your own environment: <code>pip install "
+                         "ipykernel</code> in it, then <code>python -m ipykernel install --user --name myenv</code>. "
+                         "Long training belongs in <code>sbatch</code>: it frees its GPUs when done. A notebook idle "
+                         "for {idle} minutes with no browser attached stops; a cell still running keeps it going."),
+}
+APP = APPS[SITE["app"]]
+JOB = SITE["app"]                # Slurm job name: how the page finds its sessions
+DIR = os.path.join(HOME, f".{JOB}-sessions")
 HUB = "/pun/sys/model_hub/"      # same look as Model Hub: reuse its Bootstrap, icons and style.css
 KEEP_DAYS = 7                    # logs of ended sessions in DIR
 
@@ -38,7 +61,7 @@ def slurm(cmd, *args):
 
 
 def choices():
-    out = [("viewer", "Editor only (login node)", f"1 CPU (shared), {SITE['mem']} memory, no GPU. Starts at once.")]
+    out = [("viewer", f"{APP['light']} (login node)", f"1 CPU (shared), {SITE['mem']} memory, no GPU. Starts at once.")]
     for n in range(1, SITE["gpu_max"] + 1):
         out.append((f"gpu{n}", f"GPU node: {n} x {SITE['gpu_type']}",
                     f"{n * SITE['cpus_per_gpu']} CPUs, {n * SITE['mem_per_gpu_mb'] // 1024} GB memory. "
@@ -51,7 +74,7 @@ def sessions():
     for line in slurm("squeue", "-h", "-u", USER, "-n", JOB, "-o", "%i|%T|%P|%b|%L|%r").splitlines():
         jid, state, part, gres, left, reason = line.split("|")
         m = re.search(r"gpu(?::[^:]+)?:(\d+)", gres)
-        where = f"GPU node: {m.group(1)} x {SITE['gpu_type']}" if m else "Editor only"
+        where = f"GPU node: {m.group(1)} x {SITE['gpu_type']}" if m else APP["light"]
         f = os.path.join(DIR, jid + ".json")
         conn = json.load(open(f)) if state == "RUNNING" and os.path.isfile(f) else None
         out.append(dict(id=jid, state=state, where=where, left=left, reason=reason, conn=conn))
@@ -86,7 +109,7 @@ def launch(body):
 def stop(body):
     jid = str(body["id"])
     if jid not in [s["id"] for s in sessions()]:
-        raise Fail(f"no VS Code session {jid}")
+        raise Fail(f"no {APP['title']} session {jid}")
     slurm("scancel", jid)
     return {"stopped": jid}
 
@@ -99,11 +122,12 @@ def card(s):
     if s["conn"]:
         pill, hint = '<span class="status text-success-emphasis bg-success-subtle">Ready</span>', f"{e(s['left'])} left"
         c = s["conn"]
-        act = f"""<form action="/rnode/{e(c['host'])}/{int(c['port'])}/login" method="post" target="_blank" class="m-0">
-  <input type="hidden" name="password" value="{e(c['password'])}">
+        method, url, field = APP["connect"]
+        act = f"""<form action="{url.format(host=e(c['host']), port=int(c['port']))}" method="{method}" target="_blank" class="m-0">
+  <input type="hidden" name="{field}" value="{e(c['password'])}">
   <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-box-arrow-up-right me-1"></i>Connect</button></form>"""
     elif s["state"] == "RUNNING":
-        pill, hint, act = '<span class="status pulse text-info-emphasis bg-info-subtle">Starting</span>', "Starting VS Code…", ""
+        pill, hint, act = '<span class="status pulse text-info-emphasis bg-info-subtle">Starting</span>', f"Starting {APP['title']}…", ""
     elif s["state"] == "PENDING":
         why = "no free spot yet" if s["reason"] in ("Resources", "Priority") else s["reason"]
         pill, hint, act = ('<span class="status pulse text-warning-emphasis bg-warning-subtle">Waiting</span>',
@@ -111,7 +135,7 @@ def card(s):
     else:
         pill, hint, act = f'<span class="status text-secondary-emphasis bg-secondary-subtle">{e(s["state"].title())}</span>', "", ""
     return f"""<li class="list-group-item d-flex flex-wrap align-items-center gap-3 py-3">
-  <span class="kind-icon text-primary-emphasis bg-primary-subtle"><i class="bi bi-code-slash"></i></span>
+  <span class="kind-icon text-primary-emphasis bg-primary-subtle"><i class="bi bi-{APP['icon']}"></i></span>
   <div class="min-w-0 flex-grow-1"><div class="fw-medium">{e(s['where'])}</div>
     <div class="meta text-body-secondary"><span><i class="bi bi-hash"></i>{e(s['id'])}</span><span>{hint}</span></div></div>
   {pill}{act}
@@ -129,21 +153,21 @@ def page(base):
         '<li class="list-group-item py-4 text-center text-body-secondary">No sessions. Launch one above.</li>'
     busy = any(not s["conn"] for s in ss)
     return f"""<!doctype html><html lang="en" data-bs-theme="light"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>VS Code</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{APP['title']}</title>
 <link rel="stylesheet" href="{HUB}vendor/bootstrap/bootstrap.min.css">
 <link rel="stylesheet" href="{HUB}vendor/bootstrap-icons/bootstrap-icons.min.css">
 <link rel="stylesheet" href="{HUB}style.css">
 <script>try{{document.documentElement.dataset.bsTheme=localStorage.getItem('mh-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}}catch(e){{}}</script>
 </head><body class="bg-body-tertiary">
 <nav class="navbar bg-body border-bottom sticky-top py-2"><div class="container-xl">
-  <span class="navbar-brand d-flex align-items-center gap-2 fw-semibold"><span class="brand-mark"><i class="bi bi-code-slash"></i></span>VS Code</span>
+  <span class="navbar-brand d-flex align-items-center gap-2 fw-semibold"><span class="brand-mark"><i class="bi bi-{APP['icon']}"></i></span>{APP['title']}</span>
   <div class="d-flex align-items-center gap-2">
     <span class="d-flex align-items-center gap-2 small"><span class="avatar" aria-hidden="true">{e(USER[0])}</span><span class="text-body-secondary">{e(USER)}</span></span>
     <button class="btn btn-sm btn-icon" id="theme" type="button" aria-label="Toggle dark mode"><i class="bi bi-moon-stars"></i></button>
   </div></div></nav>
 <main class="container-xl py-4" style="max-width:820px">
   <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-4">
-    <div><h1 class="h3 mb-1">VS Code</h1><p class="text-body-secondary mb-0">VS Code in your browser, running as you, on your own files.</p></div>
+    <div><h1 class="h3 mb-1">{APP['title']}</h1><p class="text-body-secondary mb-0">{APP['tagline']}</p></div>
     <a class="btn btn-outline-secondary" href="{HUB}"><i class="bi bi-boxes me-1"></i>Model Hub</a>
   </div>
   <div class="alert alert-danger d-none" id="err"></div>{err}
@@ -161,9 +185,7 @@ def page(base):
   <div class="card mb-4"><div class="card-body pb-0"><div class="eyebrow">Your sessions</div></div>
     <ul class="list-group list-group-flush">{rows}</ul></div>
   <div class="card"><div class="card-body small text-body-secondary">
-    Extensions and settings you add are kept in your home folder for next time. Heavy or long work belongs in
-    <code>sbatch</code> from VS Code's terminal: it frees its CPUs and GPUs when done. An editor with no browser
-    attached for {SITE['idle_seconds'] // 60} minutes stops by itself.</div></div>
+    {APP['note'].format(idle=SITE['idle_seconds'] // 60)}</div></div>
 </main>
 <script>
 const where=document.getElementById('where'),hours=document.getElementById('hours'),hint=document.getElementById('hint');

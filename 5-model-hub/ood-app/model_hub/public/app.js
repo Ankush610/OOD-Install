@@ -765,7 +765,7 @@ with mlflow.start_run():
             Add a password: any cluster user can open <code>/rnode</code> addresses.</li></ol>`)}
     </div></div>
     <div class="col-lg-4"><div class="card"><div class="card-body p-4 small"><div class="eyebrow mb-3">Good to know</div><ul class="mb-0 ps-3 d-flex flex-column gap-2">
-      <li>Train with the cluster's containers (ml-classic, pytorch-mlflow, pytorch-llm for chat models). Then your model uses the same library versions it's served with.</li>
+      <li>Train with the cluster's containers (ml-classic, pytorch, pytorch-llm for chat models). Then your model uses the same library versions it's served with.</li>
       <li>Your jobs sign in to MLflow with <code>~/.mlflow/credentials</code>. The <a href="${h(ui)}" target="_blank" rel="noopener">MLflow UI</a> uses your cluster password.</li>
       <li>You can use up to ${ME.limits.gpus} GPU${ME.limits.gpus === 1 ? '' : 's'} at once. An endpoint runs for ${ME.limits.default_hours} hours by default
         (max ${ME.limits.max_hours}), then stops. Deploy again to restart it. Need more? Ask your admin.</li></ul></div></div></div></div>`;

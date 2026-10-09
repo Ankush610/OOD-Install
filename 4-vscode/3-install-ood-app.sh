@@ -35,7 +35,7 @@ cp -r "$HERE/ood-app/vscode" "$APP"
 rm -rf "$APP/__pycache__"
 export CODE_SERVER_ROOT VSCODE_IDLE_SECONDS
 envsubst '$CODE_SERVER_ROOT $VSCODE_IDLE_SECONDS' < "$HERE/ood-app/vscode/job.sh" > "$APP/job.sh"
-python3 -c 'import json,sys; a=sys.argv; json.dump({"slurm_bin": a[2], "slurm_conf": a[11], "viewer_partition": a[3], "mem": a[4],
+python3 -c 'import json,sys; a=sys.argv; json.dump({"app": "vscode", "slurm_bin": a[2], "slurm_conf": a[11], "viewer_partition": a[3], "mem": a[4],
   "idle_seconds": int(a[5]), "gpu_partition": a[6], "gpu_type": a[7], "gpu_max": int(a[8]) if a[6] else 0,
   "cpus_per_gpu": int(a[9]), "mem_per_gpu_mb": int(a[10])}, open(a[1], "w"), indent=1)' \
   "$APP/site.json" "$SLURM_BIN" "$VIEWER_PARTITION" "$VSCODE_MEM" "$VSCODE_IDLE_SECONDS" \
