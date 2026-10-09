@@ -172,6 +172,15 @@ brand_bg_color: "${PORTAL_COLOR}"
 brand_link_active_bg_color: "rgba(0, 0, 0, 0.3)"
 disable_dashboard_welcome_message: true     # the Open OnDemand logo + "OnDemand provides ..." text
 custom_css_files: ["ai-factory/ai-factory.css"]
+# top bar: no Jobs, My Interactive Sessions, All Apps. Interactive Apps = every app in subcategory "Servers"
+# (Jupyter, VS Code, MLflow, Model Hub, and any new one), so OOD's Desktop (subcategory "Desktops") is left out.
+nav_bar:
+  - files
+  - clusters
+  - title: "Interactive Apps"
+    links:
+      - group: "Servers"
+      - apps: [{ category: "Interactive Apps", subcategory: "Servers" }]
 YML
 
 echo "== 9. Start web server, open https"

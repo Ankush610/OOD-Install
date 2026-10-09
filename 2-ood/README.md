@@ -17,7 +17,7 @@ It uses these values from `../site.conf`:
 | `OOD_SERVERNAME` | the exact host in the browser URL (`localhost` behind an SSH tunnel) |
 | `OOD_ADMIN` | a real **local** Linux user with an htpasswd web login, which still works when LDAP is down |
 | `CLUSTER_ID` / `CLUSTER_TITLE` | OOD cluster file name, and the name users see |
-| `PORTAL_TITLE` / `PORTAL_COLOR` | name in the top bar and tab title (also the Keycloak login heading), top bar colour. The look is `ondemand.d/ai-factory.yml` + `branding/ai-factory.css` (no footer, no welcome logo, login page background on the home page); OOD's own files are not patched |
+| `PORTAL_TITLE` / `PORTAL_COLOR` | name in the top bar and tab title (also the Keycloak login heading), top bar colour. The look is `ondemand.d/ai-factory.yml` + `branding/ai-factory.css` (footer = "© 2026 C-DAC India — Government of India" instead of OOD's, no welcome logo, login page background on the home page; top bar = Files, Clusters, Interactive Apps with only the "Servers" apps, so no Jobs, My Interactive Sessions, All Apps or Desktop); OOD's own files are not patched |
 | `SLURM_BIN` / `SLURM_CONF` | folder of `sbatch`, and `slurm.conf` |
 | `LDAP_BASE` | where Apache looks users up |
 

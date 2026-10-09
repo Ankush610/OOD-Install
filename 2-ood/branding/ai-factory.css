@@ -1,12 +1,30 @@
 /* AI-Factory look for OOD's dashboard. Loaded through custom_css_files (setup-ood.sh, step 8). */
 
-/* no Open OnDemand branding: the footer is only "Powered by Open OnDemand", its GitHub link and version */
+/* footer: OOD's own content ("Powered by Open OnDemand", GitHub link, version) is hidden and our line is shown
+   instead, centred and kept at the bottom of the window even when the page is short */
+body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
 footer.footer {
+    margin-top: auto !important;
+    justify-content: center !important;
+    align-items: center !important;
+}
+
+footer.footer > * {
     display: none !important;
+}
+
+footer.footer::after {
+    content: "© 2026 C-DAC India — Government of India";
+    color: #1e3a66;
+    font-size: 0.875rem;
 }
 
 /* background on the home page only: there, the navbar's title link is marked aria-current="page" */
 body:has(.navbar-brand-logo[aria-current="page"]) {
-    min-height: 100vh;
     background: url("bg.jpg") center / cover no-repeat fixed;
 }
