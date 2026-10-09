@@ -110,7 +110,8 @@ def cmd_realm():
     a, e = login(), os.environ
     realm, base = e["KEYCLOAK_REALM"], e["LDAP_BASE"]
     settings = {
-        "realm": realm, "enabled": True, "displayName": e["CLUSTER_TITLE"],
+        "realm": realm, "enabled": True, "displayName": e["PORTAL_TITLE"],
+        "displayNameHtml": e["PORTAL_TITLE"], "loginTheme": "ai-factory",      # theme/ai-factory (1-install.sh)
         # LDAP owns users and passwords: no sign-up, no reset, no editing here
         "registrationAllowed": False, "resetPasswordAllowed": False, "editUsernameAllowed": False,
         "loginWithEmailAllowed": False, "duplicateEmailsAllowed": True, "rememberMe": False,

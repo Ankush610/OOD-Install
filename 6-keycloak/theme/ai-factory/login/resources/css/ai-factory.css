@@ -1,0 +1,9 @@
+:root {
+    --keycloak-bg-logo-url: url("../img/bg.jpg");
+}
+
+/* the heading (realm displayNameHtml) is white by default, made for a dark background */
+#kc-header-wrapper {
+    color: #1e3a66 !important;
+    font-weight: 600;
+}

@@ -17,6 +17,7 @@ It uses these values from `../site.conf`:
 | `OOD_SERVERNAME` | the exact host in the browser URL (`localhost` behind an SSH tunnel) |
 | `OOD_ADMIN` | a real **local** Linux user with an htpasswd web login, which still works when LDAP is down |
 | `CLUSTER_ID` / `CLUSTER_TITLE` | OOD cluster file name, and the name users see |
+| `PORTAL_TITLE` / `PORTAL_COLOR` | name in the top bar and tab title (also the Keycloak login heading), top bar colour. The look is `ondemand.d/ai-factory.yml` + `branding/ai-factory.css` (no footer, no welcome logo, login page background on the home page); OOD's own files are not patched |
 | `SLURM_BIN` / `SLURM_CONF` | folder of `sbatch`, and `slurm.conf` |
 | `LDAP_BASE` | where Apache looks users up |
 
@@ -49,6 +50,7 @@ LDAP is asked **first**. Apache stops at the first source that knows the user, s
 | `resolve_ctls_from_dns_srv ... Unknown host` | OOD doesn't see `SLURM_CONF` | set `SLURM_CONF` in `site.conf`, rerun, Restart Web Server |
 | `Problem talking to database ... 'cluster' can't be reached` | a `cluster:` line in the cluster file makes OOD use `--clusters`, which needs `slurmdbd` | don't add one (the script doesn't) |
 | `sbatch: command not found` | wrong `SLURM_BIN` | `SLURM_BIN` = the folder of `which sbatch` |
+| home page still shows the Open OnDemand logo/footer | the user's dashboard was started before the change | **Restart Web Server**; hard-reload the page (Ctrl+Shift+R) |
 | a config change has no effect | OOD caches config per user | **Restart Web Server** (top-right menu) |
 
 **Renaming the cluster:** change `CLUSTER_ID`/`CLUSTER_TITLE` in `site.conf`, delete the old `clusters.d/<old>.yml`, rerun, then Restart Web Server.

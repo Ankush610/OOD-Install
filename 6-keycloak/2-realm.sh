@@ -8,7 +8,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/../site.conf"
 [ "$(id -u)" = 0 ] || { echo "Run with sudo (reads the Keycloak admin password)." >&2; exit 1; }
-export KC_URL=http://127.0.0.1:$KEYCLOAK_PORT$KEYCLOAK_PATH KEYCLOAK_ADMIN KEYCLOAK_DATA KEYCLOAK_REALM LDAP_BASE CLUSTER_TITLE
+export KC_URL=http://127.0.0.1:$KEYCLOAK_PORT$KEYCLOAK_PATH KEYCLOAK_ADMIN KEYCLOAK_DATA KEYCLOAK_REALM LDAP_BASE PORTAL_TITLE
 # Keycloak and LDAP are both on master: the password check never leaves the machine (like OOD's ldap://localhost)
 export KC_LDAP_URL=ldap://127.0.0.1:389
 

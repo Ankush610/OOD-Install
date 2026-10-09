@@ -74,7 +74,7 @@ echo "== 6. Portal config"
 if [ "$OOD_AUTH" = ldap ]; then
   auth="auth:
   - 'AuthType Basic'
-  - 'AuthName \"Open OnDemand\"'
+  - 'AuthName \"${PORTAL_TITLE}\"'
   - 'AuthBasicProvider ldap file'
   - 'AuthLDAPURL \"ldap://localhost/ou=People,${LDAP_BASE}?uid?one\"'
   - 'AuthUserFile \"${HTPASSWD}\"'
@@ -159,7 +159,22 @@ v2:
     conf: "${SLURM_CONF}"
 EOF
 
-echo "== 8. Start web server, open https"
+echo "== 8. Look: ${PORTAL_TITLE} name, navy top bar, no OOD branding, login page background on home"
+# all through OOD's own settings; nothing in OOD's files is patched (survives OOD upgrades)
+install -d /var/www/ood/public/ai-factory
+install -m 644 "$HERE/branding/ai-factory.css" /var/www/ood/public/ai-factory/
+install -m 644 "$HERE/../6-keycloak/theme/ai-factory/login/resources/img/bg.jpg" /var/www/ood/public/ai-factory/
+cat > /etc/ood/config/ondemand.d/ai-factory.yml <<YML
+# Written by OOD-Install/2-ood/setup-ood.sh. Users see changes after "Restart Web Server".
+dashboard_title: "${PORTAL_TITLE}"
+navbar_type: dark
+brand_bg_color: "${PORTAL_COLOR}"
+brand_link_active_bg_color: "rgba(0, 0, 0, 0.3)"
+disable_dashboard_welcome_message: true     # the Open OnDemand logo + "OnDemand provides ..." text
+custom_css_files: ["ai-factory/ai-factory.css"]
+YML
+
+echo "== 9. Start web server, open https"
 # a broken config would take OOD down on restart: check first
 apachectl configtest || { echo "Apache config error (see above): web server NOT restarted." >&2; exit 1; }
 systemctl enable httpd
@@ -169,7 +184,7 @@ if systemctl is-active -q firewalld; then
   firewall-cmd --reload
 fi
 
-echo "== 9. Check"
+echo "== 10. Check"
 rpm -q ondemand mod_ldap
 echo "/                   -> $(curl -skI -o /dev/null -w '%{http_code}' https://localhost/)   (expect 302)"
 if [ "$OOD_AUTH" = ldap ]; then

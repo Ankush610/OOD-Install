@@ -62,6 +62,7 @@ Then open `https://$OOD_SERVERNAME`: the Keycloak login page comes first, then O
 | `2-realm.sh` | realm settings (no sign-up, no password reset, brute-force protection), LDAP users + groups, full sync, test instructions |
 | `kc.py` | the admin REST calls (stdlib Python; reads passwords from files): `admin`, `realm`, `client` (OIDC client for a web app, secret to a file), `local-user` |
 | `image/Containerfile` | the optimized Keycloak image |
+| `theme/ai-factory/login/` | login page look: background `resources/img/bg.jpg`, dark heading (`css/ai-factory.css`); heading text = `PORTAL_TITLE`. `1-install.sh` copies it to `KEYCLOAK_DATA/themes` (mounted read-only) and restarts Keycloak when it changed; `2-realm.sh` turns it on |
 
 ## Day to day
 

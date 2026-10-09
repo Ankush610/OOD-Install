@@ -75,6 +75,10 @@ unit() {  # unit <file> : writes stdin there; prints the name if it changed
 }
 install -d "$UNITS"
 changed=$(
+# login page look (theme/ai-factory): root-owned copy on master's disk, mounted read-only; a change restarts Keycloak
+if ! diff -rq "$HERE/theme" "$KEYCLOAK_DATA/themes" >/dev/null 2>&1; then
+  rm -rf "$KEYCLOAK_DATA/themes"; (umask 022; cp -r "$HERE/theme" "$KEYCLOAK_DATA/themes"); echo themes
+fi
 unit keycloak-db.container <<EOF
 # Written by OOD-Install/6-keycloak/1-install.sh. Keycloak's database.
 [Unit]
@@ -114,6 +118,7 @@ User=$KEYCLOAK_UID
 Group=$KEYCLOAK_UID
 # Keycloak writes temp files to /opt/keycloak/data; nothing in it needs to survive a restart (all state is in Postgres)
 Tmpfs=/opt/keycloak/data:rw,mode=1777
+Volume=$KEYCLOAK_DATA/themes:/opt/keycloak/themes:ro
 EnvironmentFile=$ENVDIR/keycloak.env
 Environment=KC_DB_URL=jdbc:postgresql://127.0.0.1:$KEYCLOAK_DB_PORT/keycloak KC_DB_USERNAME=keycloak
 Environment=KC_HTTP_ENABLED=true KC_HTTP_HOST=127.0.0.1 KC_HTTP_PORT=$KEYCLOAK_PORT KC_HTTP_MANAGEMENT_PORT=$KEYCLOAK_MGMT_PORT

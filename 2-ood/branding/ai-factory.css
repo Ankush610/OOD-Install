@@ -1,0 +1,12 @@
+/* AI-Factory look for OOD's dashboard. Loaded through custom_css_files (setup-ood.sh, step 8). */
+
+/* no Open OnDemand branding: the footer is only "Powered by Open OnDemand", its GitHub link and version */
+footer.footer {
+    display: none !important;
+}
+
+/* background on the home page only: there, the navbar's title link is marked aria-current="page" */
+body:has(.navbar-brand-logo[aria-current="page"]) {
+    min-height: 100vh;
+    background: url("bg.jpg") center / cover no-repeat fixed;
+}
