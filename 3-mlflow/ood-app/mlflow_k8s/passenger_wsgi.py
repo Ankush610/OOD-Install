@@ -22,6 +22,82 @@ def row(ok, title, hint):
     return f"""<li class="list-group-item d-flex align-items-center gap-3 py-3">
   <div class="min-w-0 flex-grow-1"><div class="fw-medium">{title}</div><div class="small text-body-secondary">{hint}</div></div>{pill}</li>"""
 
+def code(id, text):
+    return (f'<div class="code-wrap mb-3"><pre class="code mb-0" id="{id}">{html.escape(text)}</pre><button class="btn btn-sm '
+            f'btn-outline-secondary btn-copy" type="button" data-copy="{id}"><i class="bi bi-clipboard"></i> Copy</button></div>')
+
+def faq_item(id, question, body):
+    return f"""<div class="accordion-item" id="{id}"><h2 class="accordion-header">
+  <button class="accordion-button collapsed fw-medium" type="button" data-bs-toggle="collapse" data-bs-target="#{id}-a">{question}</button></h2>
+  <div id="{id}-a" class="accordion-collapse collapse" data-bs-parent="#faq"><div class="accordion-body small">{body}</div></div></div>"""
+
+def faq():
+    u = html.escape(USER)
+    tree = f"""/home/{USER}/
+├── projects/
+│   └── my-project/      your code and job scripts
+│       ├── data/        datasets
+│       └── output/      checkpoints and logs
+├── models/
+│   └── my-llm/
+│       └── v1/          a finished chat model, ready for Model Hub
+└── model-downloads/     models you download from Model Hub"""
+    save = (f'model = model.merge_and_unload()   # only if you used LoRA\n'
+            f'model.save_pretrained("/home/{USER}/models/my-llm/v1")\n'
+            f'tokenizer.save_pretrained("/home/{USER}/models/my-llm/v1")')
+    return "".join([
+        faq_item("faq-layout", "Where should I keep my files?",
+            f"""<p>This layout always works:</p><pre class="code mb-3" style="white-space:pre;overflow-x:auto">{html.escape(tree)}</pre>
+            <p class="mb-2">You can organise your files your own way. Only one rule is fixed: <b>chat models go in
+            <code>~/models/</code></b>, because that is the only folder Model Hub can read.</p>
+            <p class="text-body-secondary mb-0">Don't delete the hidden <code>.mlflow</code> folder in your home: it holds your job login.</p>"""),
+        faq_item("faq-name", "Why must my experiment name start with my username?",
+            f"""<p class="mb-2">Experiment names are shared by everyone on the cluster, but you only see your own.
+            If someone else already used a name, you get <b>Permission denied (403)</b> and can't see why.</p>
+            <p class="mb-0">Starting with <code>{u}/</code> means nobody else can have the same name. Example:
+            <code>{u}/mnist-test</code>.</p>"""),
+        faq_item("faq-model", "How do I put my model into Model Hub?",
+            f"""<p class="mb-2"><b>Classic ML or deep learning</b> (scikit-learn, XGBoost, PyTorch&hellip;): log the model with a
+            name in your training script. It appears in Model Hub straight away.</p>
+            {code("c-ml", 'mlflow.sklearn.log_model(model, name="model", registered_model_name="my-model", input_example=X[:5])')}
+            <p class="mb-0"><b>Chat models (LLMs)</b> work differently: see the next question.
+            Model Hub's <a href="{HUB}#/help">Add your model</a> page has examples for each type.</p>"""),
+        faq_item("faq-llm", "How do I put a chat model (LLM) into Model Hub?",
+            f"""<p class="mb-2">Chat models are too big to store in MLflow, so they stay in your home folder and MLflow only
+            remembers where they are.</p>
+            <ol class="ps-3 mb-3">
+              <li class="mb-2">At the end of training, save the <b>full model</b> into its own folder in <code>~/models/</code>.
+                If you trained with LoRA, the first line merges it in. Otherwise leave that line out.
+                {code("c-save", save)}</li>
+              <li class="mb-2">On the login node, register it:
+                {code("c-reg", "model-register ~/models/my-llm/v1 my-llm")}</li>
+              <li>Open <a href="{HUB}">Model Hub</a>. It is listed as a <b>Chat model</b>: click it, then <b>Deploy</b>.</li>
+            </ol>
+            <div class="alert alert-warning small mb-0">Saving a chat model with <code>mlflow.transformers.log_model</code> or as
+              an artifact does <b>not</b> work for Model Hub. Always use <code>model-register</code>.</div>"""),
+        faq_item("faq-llm-missing", "My chat model doesn't show up, or won't deploy",
+            """<p class="mb-2">Check these:</p><ul class="ps-3 mb-0">
+              <li>The folder is inside <code>~/models/</code>.</li>
+              <li>It is a full model: it has <code>config.json</code> and <code>.safetensors</code> files. A folder with only
+                <code>adapter_config.json</code> is a LoRA adapter: merge it first.</li>
+              <li>You ran <code>model-register</code>, and it printed <b>Registered &hellip; version &hellip;</b></li>
+              <li>Each new version has its own folder (<code>v1</code>, <code>v2</code>&hellip;). Don't overwrite a folder that
+                a running endpoint is using.</li></ul>"""),
+        faq_item("faq-errors", "I get an error: 401, 403, 404 or connection refused",
+            f"""<dl class="mb-0">
+              <dt><code>401</code> &middot; Not authenticated</dt>
+              <dd class="text-body-secondary mb-3">MLflow doesn't know who you are. Usually your job can't find your login:
+                check that <b>Job login</b> above says OK.</dd>
+              <dt><code>403</code> &middot; Permission denied</dt>
+              <dd class="text-body-secondary mb-3">You're logged in, but it isn't yours. Usually the experiment name is already
+                used by someone else: use <code>{u}/&hellip;</code></dd>
+              <dt><code>404</code> &middot; Not found</dt>
+              <dd class="text-body-secondary mb-3">The address, experiment or model name is wrong. Check for typos.</dd>
+              <dt>Connection refused or timed out</dt>
+              <dd class="text-body-secondary mb-0">MLflow can't be reached. Check the tracking address, and that
+                <b>MLflow server</b> above says OK.</dd></dl>"""),
+    ])
+
 def application(environ, start_response):
     server_ok, creds_ok = up(), os.path.isfile(CREDS)
     export = html.escape(f"export MLFLOW_TRACKING_URI={URI}")
@@ -43,6 +119,7 @@ def application(environ, start_response):
 <link rel="stylesheet" href="{HUB}vendor/bootstrap/bootstrap.min.css">
 <link rel="stylesheet" href="{HUB}vendor/bootstrap-icons/bootstrap-icons.min.css">
 <link rel="stylesheet" href="{HUB}style.css">
+<style>#faq .accordion-item{{scroll-margin-top:5rem}}</style>
 <script>try{{document.documentElement.dataset.bsTheme=localStorage.getItem('mh-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}}catch(e){{}}</script>
 </head><body class="bg-body-tertiary">
 <nav class="navbar bg-body border-bottom sticky-top py-2"><div class="container-xl">
@@ -73,27 +150,21 @@ def application(environ, start_response):
         <div class="code-wrap"><pre class="code mb-0" id="exp-sh">{exp_sh}</pre><button class="btn btn-sm btn-outline-secondary btn-copy" type="button" data-copy="exp-sh"><i class="bi bi-clipboard"></i> Copy</button></div></li>
       <li><div class="fw-medium">Log runs as usual</div>
         <div class="small text-body-secondary">Your jobs log in with a token from <code>~/.mlflow/credentials</code>, so no password goes into your scripts.</div></li>
-    </ol></div></div>
-  <div class="card mb-4"><div class="card-body">
-    <div class="eyebrow mb-3">If something goes wrong</div>
-    <dl class="mb-0 small">
-      <dt class="fw-semibold"><code>401</code> &middot; Not authenticated</dt>
-      <dd class="text-body-secondary mb-3">MLflow doesn't know who you are. Usually your job can't find your login: check that
-        <b>Job login</b> above says OK.</dd>
-      <dt class="fw-semibold"><code>403</code> &middot; Permission denied</dt>
-      <dd class="text-body-secondary mb-3">You're logged in, but it isn't yours. Usually the experiment name is already used by
-        someone else: use <code>{user}/&hellip;</code></dd>
-      <dt class="fw-semibold"><code>404</code> &middot; Not found</dt>
-      <dd class="text-body-secondary mb-3">The address, experiment or model name is wrong. Check for typos.</dd>
-      <dt class="fw-semibold">Connection refused or timed out</dt>
-      <dd class="text-body-secondary mb-0">MLflow can't be reached. Check the tracking address, and that <b>MLflow server</b> above says OK.</dd>
-    </dl></div></div>
+    </ol>
+    <div class="alert alert-warning d-flex gap-2 small mt-4 mb-0"><i class="bi bi-chat-dots"></i>
+      <div><b>Training a chat model (LLM)?</b> It reaches Model Hub only if you save it in <code>~/models/</code> and register it
+        with <code>model-register</code>. <a href="#faq-llm" class="alert-link">Show me how</a></div></div></div></div>
+  <div class="card mb-4"><div class="card-body pb-2"><div class="eyebrow mb-3">Questions</div></div>
+    <div class="accordion accordion-flush" id="faq">{faq()}</div></div>
   <div class="card"><div class="card-body">
     <div class="eyebrow mb-2">Web UI</div>
     <p class="small text-body-secondary mb-0">{ui_note}</p></div></div>
 </main>
+<script src="{HUB}vendor/bootstrap/bootstrap.bundle.min.js"></script>
 <script>
 const $=id=>document.getElementById(id);
+const openFaq=()=>{{const q=/^#faq-[a-z-]+$/.test(location.hash)&&$(location.hash.slice(1)+'-a');if(q){{bootstrap.Collapse.getOrCreateInstance(q,{{toggle:false}}).show();q.parentElement.scrollIntoView({{block:'start'}})}}}};
+addEventListener('hashchange',openFaq);openFaq();
 document.querySelectorAll('[data-copy]').forEach(b=>b.onclick=()=>navigator.clipboard.writeText($(b.dataset.copy).textContent)
   .then(()=>{{b.innerHTML='<i class="bi bi-check2"></i> Copied';setTimeout(()=>b.innerHTML='<i class="bi bi-clipboard"></i> Copy',1500)}}));
 const t=document.getElementById('theme'),ic=()=>t.innerHTML='<i class="bi bi-'+(document.documentElement.dataset.bsTheme==='dark'?'sun':'moon-stars')+'"></i>';ic();

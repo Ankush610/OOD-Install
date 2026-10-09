@@ -740,14 +740,17 @@ function renderHelp() {
     `<div class="row g-4 align-items-start"><div class="col-lg-8">
     <div class="accordion mb-4" id="acc">
       ${step(0, 'graph-up', 'Classic ML: scikit-learn, XGBoost, LightGBM, CatBoost', 'CPU', codeBlock('h-ml',
-`mlflow.set_experiment("my-project")
+`mlflow.set_experiment("${ME.user}/my-project")   # start with your username
 with mlflow.start_run():
     mlflow.sklearn.log_model(model, name="model", registered_model_name="churn",
                              input_example=X[:5])   # its columns become the form`, 'Add to your training script'))}
       ${step(1, 'cpu', 'Deep learning: PyTorch', 'GPU or CPU', codeBlock('h-dl',
 `mlflow.pytorch.log_model(net, name="model", registered_model_name="my-net",
                          input_example=X[:2].numpy())   # required: MLflow uses it to trace the model`, 'Add to your training script'))}
-      ${step(2, 'chat-dots', 'Chat model (LLM): a Hugging Face folder', 'GPU', codeBlock('h-llm',
+      ${step(2, 'chat-dots', 'Chat model (LLM): a Hugging Face folder', 'GPU', `<div class="alert alert-warning small">
+          Save the <b>full model</b> (LoRA merged) in its own folder in <code>~/models/</code>, then register it with the command below.
+          Logging it to MLflow in Python does not work for chat models.
+          <a class="alert-link" href="/pun/sys/mlflow_k8s/#faq-llm">Step by step</a></div>` + codeBlock('h-llm',
 `model-register ~/models/my-llm/v1 my-llm   # the weights stay in ~/models`, 'Run on the login node'))}
       ${step(3, 'arrow-repeat', 'Already trained? Register an existing run', '', `<p class="small">In the <a href="${h(ui)}" target="_blank" rel="noopener">MLflow UI</a>:
           open the run, go to <b>Logged models</b> or <b>Artifacts</b>, select the model, then click <b>Register model</b>. Or in Python:</p>` +
@@ -762,7 +765,7 @@ with mlflow.start_run():
             Add a password: any cluster user can open <code>/rnode</code> addresses.</li></ol>`)}
     </div></div>
     <div class="col-lg-4"><div class="card"><div class="card-body p-4 small"><div class="eyebrow mb-3">Good to know</div><ul class="mb-0 ps-3 d-flex flex-column gap-2">
-      <li>Train with the cluster's containers (ml-classic, pytorch-mlflow). Then your model uses the same library versions it's served with.</li>
+      <li>Train with the cluster's containers (ml-classic, pytorch-mlflow, pytorch-llm for chat models). Then your model uses the same library versions it's served with.</li>
       <li>Your jobs sign in to MLflow with <code>~/.mlflow/credentials</code>. The <a href="${h(ui)}" target="_blank" rel="noopener">MLflow UI</a> uses your cluster password.</li>
       <li>You can use up to ${ME.limits.gpus} GPU${ME.limits.gpus === 1 ? '' : 's'} at once. An endpoint runs for ${ME.limits.default_hours} hours by default
         (max ${ME.limits.max_hours}), then stops. Deploy again to restart it. Need more? Ask your admin.</li></ul></div></div></div></div>`;
