@@ -191,6 +191,7 @@ async function renderModel(name, version) {
         ${info.can_manage ? publicCard(name, info) : ''}
         ${!info.mine && !isLLM ? `<div class="alert alert-warning d-flex gap-2 mb-0" role="alert"><i class="bi bi-exclamation-triangle mt-1"></i>
           <div>Public model by <b>${h(info.owner)}</b>. When you deploy it, it runs ${h(info.owner)}'s code in your space. Deploy only models from people you trust.</div></div>` : ''}
+        <div class="card"><div class="card-body p-4" id="dlcard"></div></div>
         <details class="card"><summary class="card-body small fw-semibold">Technical details</summary>
           <div class="card-body pt-0"><dl class="row small mb-0">
           ${dd('Served with', isLLM ? 'vLLM (OpenAI-compatible API)' : 'MLflow serving (<code>/invocations</code>)')}
@@ -226,7 +227,7 @@ async function renderModel(name, version) {
           <button class="btn btn-link btn-sm w-100 mt-1 text-body-secondary text-decoration-none" id="pre" type="button">See what gets created</button>
         </form><div id="out" class="mt-3"></div>
       </div></div>
-      ${isLLM && info.mine ? '' : `<div class="card mt-4"><div class="card-body p-4" id="dlcard"></div></div>`}</div>
+      </div>
     </div>`;
   // the cluster's timer is copying the files: refresh only this card until it's done (or failed)
   const size = isLLM ? llm.size : info.size, copying = i => i.public && !/^(ready|error)/.test(i.public_status || '');
@@ -304,9 +305,18 @@ function confirmBox(title, body, ok, okClass, fn) {
 }
 
 // Download: a .zip to this computer (ML / DL), or a copy into ~/model-downloads on the cluster (any model, runs
-// in the background: refreshes itself until done)
+// in the background: refreshes itself until done). Your own chat model: its folder already is the files, say where.
 async function downloadCard(name, info, size) {
   const el = $('#dlcard'), base = `models/${enc(name)}/${info.version}/download`;
+  if (info.kind === 'LLM' && info.mine) {
+    el.innerHTML = `<h2 class="h5 fw-semibold mb-1">Download</h2>
+      <p class="small text-body-secondary mb-2">Nothing to download: this model's files${size ? ` (${bytes(size)})` : ''} are already on the cluster, in</p>
+      <div class="d-flex align-items-center gap-2"><code class="text-break">${h(info.path.replace(/^\/home\/[^/]+/, '~'))}</code>
+        <button class="btn btn-sm btn-outline-secondary" type="button" id="cppath"><i class="bi bi-clipboard"></i></button></div>
+      <div class="form-text">To get them onto your computer, use OOD's Files app or <code>scp</code>.</div>`;
+    $('#cppath').onclick = () => copy(info.path);
+    return;
+  }
   let st; try { st = await api(base); } catch (e) { el.innerHTML = alertBox(e); return; }
   if (!document.body.contains(el)) return;
   const where = `<code class="text-break">${h(st.path.replace(/^\/home\/[^/]+/, '~'))}</code>`;

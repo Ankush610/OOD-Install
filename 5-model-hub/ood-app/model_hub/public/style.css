@@ -29,7 +29,9 @@
 .meta { display: flex; flex-wrap: wrap; align-items: center; column-gap: .875rem; row-gap: .125rem; font-size: .875rem;
   color: var(--bs-secondary-color); }
 .meta i { margin-right: .25rem; }
-.sticky-lg { position: sticky; top: 5rem; }
+/* Deploy stays in view while scrolling, only when the screen is tall enough to show all of it (else part of it
+   would be unreachable until the end of the page) */
+@media (min-width: 992px) and (min-height: 800px) { .sticky-lg { position: sticky; top: 5rem; } }
 .fact { border: 1px solid var(--bs-border-color-translucent); border-radius: .625rem; padding: .625rem .75rem; height: 100%; }
 .fact .v { font-size: 1.125rem; font-weight: 500; }
 
