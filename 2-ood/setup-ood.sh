@@ -159,10 +159,13 @@ v2:
     conf: "${SLURM_CONF}"
 EOF
 
-echo "== 8. Look: C-DAC logo + tab icon, navy top bar, no OOD branding, login page background on home"
+echo "== 8. Look: C-DAC logo + tab icon, navy top bar (also on our app pages), no OOD branding, login page background on home"
 # all through OOD's own settings; nothing in OOD's files is patched (survives OOD upgrades)
 install -d /var/www/ood/public/ai-factory
 install -m 644 "$HERE"/branding/{ai-factory.css,cdac-logo.svg,favicon.ico} /var/www/ood/public/ai-factory/
+# top bar of our app pages (VS Code, Jupyter, MLflow, Model Hub): same colour as OOD's, from PORTAL_COLOR
+{ echo ":root { --portal-color: ${PORTAL_COLOR}; }"; cat "$HERE/branding/app-bar.css"; } > /var/www/ood/public/ai-factory/app-bar.css
+chmod 644 /var/www/ood/public/ai-factory/app-bar.css
 install -m 644 "$HERE/../6-keycloak/theme/ai-factory/login/resources/img/bg.jpg" /var/www/ood/public/ai-factory/
 cat > /etc/ood/config/ondemand.d/ai-factory.yml <<YML
 # Written by OOD-Install/2-ood/setup-ood.sh. Users see changes after "Restart Web Server".

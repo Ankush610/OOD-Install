@@ -10,8 +10,6 @@
 .navbar .nav-link { color: var(--bs-secondary-color); border-radius: .5rem; padding: .375rem .75rem !important; font-weight: 500; }
 .navbar .nav-link:hover { color: var(--bs-body-color); background: var(--bs-tertiary-bg); }
 .navbar .nav-link.active { color: var(--bs-body-color); background: var(--bs-secondary-bg); }
-.avatar { width: 28px; height: 28px; border-radius: 50%; display: inline-grid; place-items: center; font-size: .8125rem;
-  font-weight: 600; background: var(--bs-primary-bg-subtle); color: var(--bs-primary-text-emphasis); text-transform: uppercase; }
 .btn-icon { width: 32px; height: 32px; padding: 0; display: inline-grid; place-items: center; color: var(--bs-secondary-color);
   border-radius: .5rem; }
 .btn-icon:hover { background: var(--bs-tertiary-bg); color: var(--bs-body-color); }

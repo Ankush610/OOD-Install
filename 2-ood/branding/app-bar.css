@@ -1,0 +1,15 @@
+/* Top bar of our own app pages (VS Code, Jupyter, MLflow, Model Hub), made to look like OOD's dashboard bar:
+   PORTAL_COLOR background, white C-DAC logo (links back to the dashboard), light text, in light and dark mode.
+   setup-ood.sh (step 8) puts ":root { --portal-color: PORTAL_COLOR }" in front of this file. The bar also has
+   data-bs-theme="dark", so Bootstrap draws its text and toggler light; without this file it stays a plain dark bar.
+   Load it after Model Hub's style.css (same selectors, the later file wins). */
+.navbar.app-bar { background-color: var(--portal-color) !important; border: 0 !important; }
+.app-bar .portal-logo { display: block; padding-right: .75rem; margin-right: .25rem; border-right: 1px solid rgba(255, 255, 255, .25); }
+.app-bar .portal-logo img { display: block; height: 40px; filter: brightness(0) invert(1); }   /* navy logo -> white, as on OOD */
+.app-bar .navbar-brand { color: #fff; }
+.app-bar .brand-mark { background: rgba(255, 255, 255, .15); }
+.app-bar .nav-link { color: rgba(255, 255, 255, .8); }
+.app-bar .nav-link:hover { color: #fff; background: rgba(255, 255, 255, .1); }
+.app-bar .nav-link.active { color: #fff; background: rgba(0, 0, 0, .3); }   /* OOD's brand_link_active_bg_color */
+.app-bar .logged-in { color: rgba(255, 255, 255, .75); }   /* OOD: icon + "Logged in as <user>" */
+.app-bar .btn-icon:hover { background: rgba(255, 255, 255, .1); color: #fff; }

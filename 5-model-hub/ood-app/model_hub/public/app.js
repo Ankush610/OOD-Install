@@ -842,7 +842,7 @@ async function route() {
   });
   if (!ME) {
     try { ME = await api('me'); } catch (e) { app.innerHTML = alertBox(e); return; }
-    $('#who').innerHTML = `<span class="avatar" aria-hidden="true">${h(ME.user[0])}</span><span class="text-body-secondary">${h(ME.user)}</span>`;
+    $('#who').innerHTML = `<i class="bi bi-person-fill" aria-hidden="true"></i> Logged in as ${h(ME.user)}`;
     const missing = [!ME.mlflow && 'an MLflow token (<code>~/.mlflow/credentials</code>)',
                      !ME.kube && 'a cluster login (<code>~/.kube/aistack.config</code>)'].filter(Boolean);
     if (missing.length) {

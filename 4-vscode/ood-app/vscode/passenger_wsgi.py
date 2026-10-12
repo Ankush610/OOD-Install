@@ -157,12 +157,13 @@ def page(base):
 <link rel="stylesheet" href="{HUB}vendor/bootstrap/bootstrap.min.css">
 <link rel="stylesheet" href="{HUB}vendor/bootstrap-icons/bootstrap-icons.min.css">
 <link rel="stylesheet" href="{HUB}style.css">
+<link rel="stylesheet" href="/public/ai-factory/app-bar.css">
 <script>try{{document.documentElement.dataset.bsTheme=localStorage.getItem('mh-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}}catch(e){{}}</script>
 </head><body class="bg-body-tertiary">
-<nav class="navbar bg-body border-bottom sticky-top py-2"><div class="container-xl">
-  <span class="navbar-brand d-flex align-items-center gap-2 fw-semibold"><span class="brand-mark"><i class="bi bi-{APP['icon']}"></i></span>{APP['title']}</span>
+<nav class="navbar app-bar bg-body sticky-top py-2" data-bs-theme="dark"><div class="container-fluid">
+  <div class="d-flex align-items-center gap-2"><a class="portal-logo" href="/pun/sys/dashboard" title="Back to the portal"><img src="/public/ai-factory/cdac-logo.svg" alt="Portal home"></a><span class="navbar-brand d-flex align-items-center gap-2 fw-semibold"><span class="brand-mark"><i class="bi bi-{APP['icon']}"></i></span>{APP['title']}</span></div>
   <div class="d-flex align-items-center gap-2">
-    <span class="d-flex align-items-center gap-2 small"><span class="avatar" aria-hidden="true">{e(USER[0])}</span><span class="text-body-secondary">{e(USER)}</span></span>
+    <span class="logged-in"><i class="bi bi-person-fill" aria-hidden="true"></i> Logged in as {e(USER)}</span>
     <button class="btn btn-sm btn-icon" id="theme" type="button" aria-label="Toggle dark mode"><i class="bi bi-moon-stars"></i></button>
   </div></div></nav>
 <main class="container-xl py-4" style="max-width:820px">

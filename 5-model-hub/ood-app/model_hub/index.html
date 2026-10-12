@@ -7,13 +7,17 @@
   <link rel="stylesheet" href="vendor/bootstrap/bootstrap.min.css">
   <link rel="stylesheet" href="vendor/bootstrap-icons/bootstrap-icons.min.css">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="/public/ai-factory/app-bar.css">
 </head>
 <body class="bg-body-tertiary">
-  <nav class="navbar navbar-expand-md bg-body border-bottom sticky-top py-2">
-    <div class="container-xl">
-      <a class="navbar-brand d-flex align-items-center gap-2 fw-semibold" href="#/">
-        <span class="brand-mark"><i class="bi bi-boxes"></i></span>Model Hub
-      </a>
+  <nav class="navbar navbar-expand-md app-bar bg-body sticky-top py-2" data-bs-theme="dark">
+    <div class="container-fluid">
+      <div class="d-flex align-items-center gap-2">
+        <a class="portal-logo" href="/pun/sys/dashboard" title="Back to the portal"><img src="/public/ai-factory/cdac-logo.svg" alt="Portal home"></a>
+        <a class="navbar-brand d-flex align-items-center gap-2 fw-semibold" href="#/">
+          <span class="brand-mark"><i class="bi bi-boxes"></i></span>Model Hub
+        </a>
+      </div>
       <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-controls="nav"
               aria-expanded="false" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>
       <div class="collapse navbar-collapse" id="nav">
@@ -24,7 +28,7 @@
           <li class="nav-item"><a class="nav-link" data-nav="help" href="#/help"><i class="bi bi-question-circle me-1"></i>Help</a></li>
         </ul>
         <div class="d-flex align-items-center gap-2">
-          <span class="d-flex align-items-center gap-2 small" id="who"></span>
+          <span class="logged-in" id="who"></span>
           <button class="btn btn-sm btn-icon" id="theme" type="button" aria-label="Toggle dark mode"><i class="bi bi-moon-stars"></i></button>
         </div>
       </div>
