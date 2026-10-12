@@ -159,19 +159,23 @@ v2:
     conf: "${SLURM_CONF}"
 EOF
 
-echo "== 8. Look: ${PORTAL_TITLE} name, navy top bar, no OOD branding, login page background on home"
+echo "== 8. Look: C-DAC logo + tab icon, navy top bar, no OOD branding, login page background on home"
 # all through OOD's own settings; nothing in OOD's files is patched (survives OOD upgrades)
 install -d /var/www/ood/public/ai-factory
-install -m 644 "$HERE/branding/ai-factory.css" /var/www/ood/public/ai-factory/
+install -m 644 "$HERE"/branding/{ai-factory.css,cdac-logo.svg,favicon.ico} /var/www/ood/public/ai-factory/
 install -m 644 "$HERE/../6-keycloak/theme/ai-factory/login/resources/img/bg.jpg" /var/www/ood/public/ai-factory/
 cat > /etc/ood/config/ondemand.d/ai-factory.yml <<YML
 # Written by OOD-Install/2-ood/setup-ood.sh. Users see changes after "Restart Web Server".
-dashboard_title: "${PORTAL_TITLE}"
+dashboard_title: "${PORTAL_TITLE}"           # tab title + the logo's alt text
+dashboard_header_img_logo: "/public/ai-factory/cdac-logo.svg"   # C-DAC logo in the top bar instead of the title
+# the dashboard takes favicon.ico (and custom_css_files) from public_url: point it at our folder,
+# so OOD's own /var/www/ood/public/favicon.ico stays untouched
+public_url: "/public/ai-factory"
 navbar_type: dark
 brand_bg_color: "${PORTAL_COLOR}"
 brand_link_active_bg_color: "rgba(0, 0, 0, 0.3)"
 disable_dashboard_welcome_message: true     # the Open OnDemand logo + "OnDemand provides ..." text
-custom_css_files: ["ai-factory/ai-factory.css"]
+custom_css_files: ["ai-factory.css"]        # relative to public_url
 # top bar: no Jobs, My Interactive Sessions, All Apps. Interactive Apps = every app in subcategory "Servers"
 # (Jupyter, VS Code, MLflow, Model Hub, and any new one), so OOD's Desktop (subcategory "Desktops") is left out.
 nav_bar:

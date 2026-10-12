@@ -24,6 +24,12 @@ footer.footer::after {
     font-size: 0.875rem;
 }
 
+/* top bar logo (dashboard_header_img_logo): the logo is navy, made white to show on the navy bar */
+.navbar-brand-logo img {
+    height: 40px;
+    filter: brightness(0) invert(1);
+}
+
 /* background on the home page only: there, the navbar's title link is marked aria-current="page" */
 body:has(.navbar-brand-logo[aria-current="page"]) {
     background: url("bg.jpg") center / cover no-repeat fixed;
