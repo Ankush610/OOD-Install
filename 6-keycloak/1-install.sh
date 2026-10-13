@@ -119,6 +119,9 @@ Group=$KEYCLOAK_UID
 # Keycloak writes temp files to /opt/keycloak/data; nothing in it needs to survive a restart (all state is in Postgres)
 Tmpfs=/opt/keycloak/data:rw,mode=1777
 Volume=$KEYCLOAK_DATA/themes:/opt/keycloak/themes:ro
+# LDAP's CA (LDAP_CA): Keycloak talks ldaps to LDAP, the only way 389 DS accepts a password change (2-realm.sh)
+Volume=$LDAP_CA:/opt/keycloak/conf/truststores/ldap-ca.crt:ro
+Environment=KC_TRUSTSTORE_PATHS=/opt/keycloak/conf/truststores/ldap-ca.crt
 EnvironmentFile=$ENVDIR/keycloak.env
 Environment=KC_DB_URL=jdbc:postgresql://127.0.0.1:$KEYCLOAK_DB_PORT/keycloak KC_DB_USERNAME=keycloak
 Environment=KC_HTTP_ENABLED=true KC_HTTP_HOST=127.0.0.1 KC_HTTP_PORT=$KEYCLOAK_PORT KC_HTTP_MANAGEMENT_PORT=$KEYCLOAK_MGMT_PORT

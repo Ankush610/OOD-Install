@@ -5,15 +5,21 @@ Reads everything from the environment (the scripts export site.conf): KC_URL (ht
 KEYCLOAK_ADMIN, KEYCLOAK_DATA (admin.pass lives there). Passwords are read from files, never from argv.
 
   kc.py admin   make KEYCLOAK_ADMIN a permanent admin, then delete the first-start bootstrap admin
-  kc.py realm   realm KEYCLOAK_REALM + read-only LDAP users and groups, then a full sync
+  kc.py realm   realm KEYCLOAK_REALM + LDAP users and groups, then a full sync. Keycloak may write ONE thing to LDAP:
+                passwords (KC_LDAP_BIND_DN + KEYCLOAK_DATA/ldap.pass; the LDAP access rule allows nothing else)
   kc.py client ID BASE_URL SECRET_FILE
                 confidential OIDC client ID for a web app at BASE_URL (login returns to BASE_URL/oidc);
                 its secret is written to SECRET_FILE (mode 600)
   kc.py local-user NAME
                 a realm user that is NOT in LDAP (the local admin's way in when LDAP is down);
                 password from stdin; does nothing if the user already exists
+  kc.py must-change NAME
+                NAME must choose a new password at their next web login (the one they have is one-time)
+  kc.py logout NAME
+                end all of NAME's sessions (1-ldap/remove-user.sh, before the LDAP delete)
   kc.py remove-user NAME
-                end all of NAME's sessions and delete Keycloak's copy (1-ldap/remove-user.sh, before the LDAP delete)
+                drop Keycloak's copy of NAME (1-ldap/remove-user.sh, AFTER the LDAP delete: Keycloak passes a delete on
+                to LDAP, where its account may not delete anything)
 """
 import json
 import os
@@ -125,24 +131,39 @@ def cmd_realm():
     else:
         a.call("PUT", f"/realms/{realm}", settings)
         print(f"realm {realm}: updated")
-    # LDAP users may have no e-mail; "verify profile" would ask for one and then fail (read-only LDAP)
+    # LDAP users may have no e-mail; "verify profile" would ask for one and then fail (LDAP attributes are read-only)
     a.call("PUT", f"/realms/{realm}/authentication/required-actions/VERIFY_PROFILE",
            {"alias": "VERIFY_PROFILE", "name": "Verify Profile", "providerId": "VERIFY_PROFILE",
             "enabled": False, "defaultAction": False})
 
+    # the one-time password a new user gets must be replaced at the first login (add-user.sh sets it per user)
+    a.call("PUT", f"/realms/{realm}/authentication/required-actions/UPDATE_PASSWORD",
+           {"alias": "UPDATE_PASSWORD", "name": "Update Password", "providerId": "UPDATE_PASSWORD",
+            "enabled": True, "defaultAction": False})
+
     rid = a.get(f"/realms/{realm}")["id"]
+    # Passwords only: Keycloak binds as KC_LDAP_BIND_DN, which LDAP lets write userPassword under ou=People and
+    # nothing else (2-realm.sh). ldaps: 389 DS refuses password changes on a plain connection.
     ldap = component(a, realm, rid, "org.keycloak.storage.UserStorageProvider", "ldap", "ldap", {
         "enabled": "true", "priority": "0", "vendor": "rhds",          # 389 DS = Red Hat Directory Server
-        "connectionUrl": e["KC_LDAP_URL"], "authType": "none",         # anonymous search, like OOD and SSSD
+        "connectionUrl": e["KC_LDAP_URL"], "useTruststoreSpi": "always",   # LDAP's CA: 1-install.sh mounts it
+        "authType": "simple", "bindDn": e["KC_LDAP_BIND_DN"], "bindCredential": read(f"{DATA}/ldap.pass"),
         "usersDn": f"ou=People,{base}", "searchScope": "1", "pagination": "true",
         "userObjectClasses": "inetOrgPerson, posixAccount",
         "usernameLDAPAttribute": "uid", "rdnLDAPAttribute": "uid", "uuidLDAPAttribute": "nsuniqueid",
-        "editMode": "READ_ONLY", "importEnabled": "true", "syncRegistrations": "false",
+        "editMode": "WRITABLE", "importEnabled": "true", "syncRegistrations": "false",
         "fullSyncPeriod": "86400", "changedSyncPeriod": "900", "batchSizeForSync": "1000",
         "cachePolicy": "DEFAULT", "connectionPooling": "true", "startTls": "false",
         "trustEmail": "false", "validatePasswordPolicy": "false", "allowKerberosAuthentication": "false",
-        "useKerberosForPasswordAuthentication": "false",
+        "useKerberosForPasswordAuthentication": "false", "usePasswordModifyExtendedOp": "false",
     })
+    # every attribute stays read-only (name, e-mail, ...): with a writable provider Keycloak would otherwise try to
+    # write profile edits to LDAP (LDAP would refuse them anyway)
+    for m in a.get(f"/realms/{realm}/components?parent={ldap}&type=org.keycloak.storage.ldap.mappers.LDAPStorageMapper"):
+        if m["providerId"] in ("user-attribute-ldap-mapper", "full-name-ldap-mapper") and m["config"].get("read.only") != ["true"]:
+            m["config"]["read.only"] = ["true"]
+            a.call("PUT", f"/realms/{realm}/components/{m['id']}", m)
+            print(f"mapper {m['name']}: read-only")
     groups = component(a, realm, ldap, "org.keycloak.storage.ldap.mappers.LDAPStorageMapper",
                        "group-ldap-mapper", "groups", {
         "groups.dn": f"ou=Groups,{base}", "group.name.ldap.attribute": "cn",
@@ -152,7 +173,7 @@ def cmd_realm():
         "preserve.group.inheritance": "false", "ignore.missing.groups": "true",
         "drop.non.existing.groups.during.sync": "true", "groups.path": "/",
     })
-    print("ldap: users from", f"ou=People,{base}", "and groups from", f"ou=Groups,{base}", "(read-only)")
+    print("ldap: users from", f"ou=People,{base}", "and groups from", f"ou=Groups,{base}", "(read-only, except passwords)")
 
     _, users = a.call("POST", f"/realms/{realm}/user-storage/{ldap}/sync?action=triggerFullSync")
     _, grp = a.call("POST", f"/realms/{realm}/user-storage/{ldap}/mappers/{groups}/sync?direction=fedToKeycloak")
@@ -204,22 +225,46 @@ def cmd_local_user(name):
     print(f"user {name}: created (local to Keycloak, not in LDAP)")
 
 
-def cmd_remove_user(name):
-    a, realm = login(), os.environ["KEYCLOAK_REALM"]
+def find_user(a, realm, name):
+    """Keycloak's user NAME (looking them up imports them from LDAP if they aren't in Keycloak yet), or None."""
     found = a.get(f"/realms/{realm}/users?exact=true&username={urllib.parse.quote(name)}")
-    if not found:
+    return found[0] if found else None
+
+
+def cmd_must_change(name):
+    a, realm = login(), os.environ["KEYCLOAK_REALM"]
+    u = find_user(a, realm, name)
+    if not u:
+        sys.exit(f"user {name}: not found (in LDAP? Keycloak's LDAP settings: 2-realm.sh)")
+    if "UPDATE_PASSWORD" not in u.get("requiredActions", []):
+        a.call("PUT", f"/realms/{realm}/users/{u['id']}", {"requiredActions": u.get("requiredActions", []) + ["UPDATE_PASSWORD"]})
+    print(f"user {name}: must choose a new password at the next web login")
+
+
+def cmd_logout(name):
+    a, realm = login(), os.environ["KEYCLOAK_REALM"]
+    u = find_user(a, realm, name)
+    if not u:
         print(f"user {name}: not in Keycloak (never logged in)")
         return
-    uid = found[0]["id"]
-    a.call("POST", f"/realms/{realm}/users/{uid}/logout")         # every session of theirs ends now
-    # read-only LDAP: Keycloak only drops its own copy; it would re-import the person while LDAP still has them
-    a.call("DELETE", f"/realms/{realm}/users/{uid}")
-    print(f"user {name}: signed out and deleted from Keycloak")
+    a.call("POST", f"/realms/{realm}/users/{u['id']}/logout")    # every session of theirs ends now
+    print(f"user {name}: signed out everywhere")
+
+
+def cmd_remove_user(name):
+    a, realm = login(), os.environ["KEYCLOAK_REALM"]
+    # once LDAP has no NAME, the lookup itself makes Keycloak drop its copy; the DELETE is for anything left
+    u = find_user(a, realm, name)
+    if u and u.get("federationLink"):
+        sys.exit(f"user {name}: still in LDAP. Delete them there first (1-ldap/remove-user.sh does)")
+    if u:
+        a.call("DELETE", f"/realms/{realm}/users/{u['id']}")
+    print(f"user {name}: deleted from Keycloak")
 
 
 if __name__ == "__main__":
     cmds = {"admin": (cmd_admin, 0), "realm": (cmd_realm, 0), "client": (cmd_client, 3), "local-user": (cmd_local_user, 1),
-            "remove-user": (cmd_remove_user, 1)}
+            "must-change": (cmd_must_change, 1), "logout": (cmd_logout, 1), "remove-user": (cmd_remove_user, 1)}
     name, args = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ("", [])
     if name not in cmds or len(args) != cmds[name][1]:
         sys.exit(__doc__)

@@ -147,13 +147,17 @@ else
   echo "MLflow not answering at $MLFLOW_URI: NOT cleaned. Later, by hand in the MLflow UI as admin: delete user $U." >&2
 fi
 
-echo "== 5. Keycloak: signed out everywhere, its copy of $U deleted (skipped if 6-keycloak isn't installed)"
-if [ -f "$KEYCLOAK_DATA/admin.pass" ]; then
-  KC_URL=http://127.0.0.1:$KEYCLOAK_PORT$KEYCLOAK_PATH KEYCLOAK_ADMIN=$KEYCLOAK_ADMIN KEYCLOAK_DATA=$KEYCLOAK_DATA \
-    KEYCLOAK_REALM=$KEYCLOAK_REALM python3 "$HERE/../6-keycloak/kc.py" remove-user "$U"
-else
-  echo "Keycloak not installed, skipped."
-fi
+kc() {  # kc.py <command> <user>, if Keycloak is installed
+  if [ -f "$KEYCLOAK_DATA/admin.pass" ]; then
+    KC_URL=http://127.0.0.1:$KEYCLOAK_PORT$KEYCLOAK_PATH KEYCLOAK_ADMIN=$KEYCLOAK_ADMIN KEYCLOAK_DATA=$KEYCLOAK_DATA \
+      KEYCLOAK_REALM=$KEYCLOAK_REALM python3 "$HERE/../6-keycloak/kc.py" "$@"
+  else
+    echo "Keycloak not installed, skipped."
+  fi
+}
+
+echo "== 5. Keycloak: signed out everywhere"
+kc logout "$U"
 
 # LDAP last: until here a failed step can simply be rerun (the script needs the LDAP user to start)
 echo "== 6. LDAP: out of every team, own group and user deleted"
@@ -164,6 +168,8 @@ ldapsearch -x -LLL -o ldif-wrap=no -H ldap://localhost -b "ou=Groups,$LDAP_BASE"
   done
 ldapdelete "${L[@]}" "cn=$U,ou=Groups,$LDAP_BASE" 2>/dev/null && echo "group $U deleted" || true
 ldapdelete "${L[@]}" "$DN" && echo "user $U deleted"
+# only now: Keycloak (writable for passwords) passes a delete on to LDAP, where its account may not delete anyone
+kc remove-user "$U"
 
 echo "== 7. Stop everything once more: an open browser tab or a queued job may have started something since step 2"
 # nothing new can start now: OOD, Slurm and SSH no longer know the name

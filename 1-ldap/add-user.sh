@@ -48,7 +48,7 @@ loginShell: /bin/bash
 EOF
 (umask 077; echo "$ID" > "$LDAP_LAST_UID_FILE")    # never handed out again, even after remove-user.sh
 
-echo "== 3. Password (typed, never on the command line)"
+echo "== 3. One-time password (typed, never on the command line)"
 # 389 DS refuses password changes on a plain connection (error 13 "Confidentiality required"): ldaps
 LDAPTLS_CACERT="$LDAP_CA" ldappasswd -x -H "$LDAP_URI" -D "$LDAP_DM" -y "$LDAP_DM_PASS_FILE" -S "uid=$U,ou=People,$LDAP_BASE"
 
@@ -84,7 +84,16 @@ else
   echo "Model Hub not set up, skipped. Later: sudo bash 5-model-hub/2-sync-users.sh $U"
 fi
 
-echo "== 8. Check"
+echo "== 8. One-time password: $U chooses their own at the first web login (skipped if 6-keycloak isn't installed)"
+# web only: someone who only ever uses SSH keeps this password until they change it (passwd, or the account page)
+if [ -f "$KEYCLOAK_DATA/admin.pass" ]; then
+  KC_URL=http://127.0.0.1:$KEYCLOAK_PORT$KEYCLOAK_PATH KEYCLOAK_ADMIN=$KEYCLOAK_ADMIN KEYCLOAK_DATA=$KEYCLOAK_DATA \
+    KEYCLOAK_REALM=$KEYCLOAK_REALM python3 "$HERE/../6-keycloak/kc.py" must-change "$U"
+else
+  echo "Keycloak not installed, skipped."
+fi
+
+echo "== 9. Check"
 getent passwd "$U" && id "$U"
 echo
-echo "Done. $U logs in everywhere (SSH, Slurm, OOD, MLflow UI) with that password."
+echo "Done. $U logs in everywhere (SSH, Slurm, OOD, MLflow UI) with that password; the first web login asks for a new one."
