@@ -1,0 +1,62 @@
+<%#
+  Home page: our tools as cards, in sections. setup-ood.sh (step 8) installs this as an OOD dashboard widget
+  (/etc/ood/config/apps/dashboard/views/widgets/) and shows it through dashboard_layout in ondemand.d/ai-factory.yml.
+  Apps come from OOD's own list (SysRouter.apps), so a card links where the top bar does, and only shows when the
+  user may open the app: the Admin section stays hidden for everyone but the admin account. Look: ai-factory.css.
+  ${OOD_ADMIN} is filled in by setup-ood.sh (envsubst).
+-%>
+<%-
+  # [section, section icon, extra class, [[app folder, title, icon, colour, subtitle, text], ...]]
+  sections = [
+    ["Develop", "code", "", [
+      ["jupyter", "Jupyter", "book", "warning", "JupyterLab on the cluster",
+       "Interactive notebooks on GPU nodes, with your home directory and datasets already in place."],
+      ["vscode", "VS Code", "code", "primary", "Code editor in your browser",
+       "A full development environment on the cluster. Edit, run and debug code next to your data."],
+      ["shell", "Shell", "terminal", "secondary", "Terminal on the login node",
+       "Command-line access for submitting Slurm jobs, loading modules and managing files."],
+    ]],
+    ["Track & Deploy", "rocket", "", [
+      ["mlflow_k8s", "MLflow", "chart-line", "success", "Experiment tracking",
+       "Record parameters, metrics and artifacts for every training run, and compare results across experiments."],
+      ["model_hub", "Model Hub", "cubes", "info", "Serve models as endpoints",
+       "Deploy registered models as API endpoints, test them in the playground and call them from your scripts."],
+    ]],
+    ["Data & Cluster", "server", "", [
+      ["files", "Files", "folder-open", "warning", "Home and scratch storage",
+       "Browse, upload and manage files in your home and scratch directories."],
+    ]],
+    ["Admin", "user-shield", "admin-only", [
+      ["aistack_admin", "AI Stack Admin", "user-shield", "danger", "Cluster administration",
+       "Monitor GPU usage across the cluster and manage users, teams and resource limits."],
+    ]],
+  ]
+  apps = SysRouter.apps.index_by(&:name)
+  # OOD_ADMIN is a local login, not in LDAP: MLflow and Model Hub log people in through LDAP, so no cards for it
+  apps = apps.except("mlflow_k8s", "model_hub") if CurrentUser.name == "${OOD_ADMIN}"
+-%>
+<div class="ai-tools">
+<%- sections.each do |heading, section_icon, extra_class, tools| -%>
+  <%- cards = tools.filter_map { |name, *card| (link = apps[name]&.links&.first) && [link, *card] } -%>
+  <%- next if cards.empty? -%>
+  <section class="mb-4 <%= extra_class %>">
+    <h2 class="eyebrow mb-2"><i class="fas fa-<%= section_icon %> me-2" aria-hidden="true"></i><%= heading %></h2>
+    <div class="row g-3">
+    <%- cards.each do |link, title, icon, colour, subtitle, text| -%>
+      <div class="col-md-6 col-lg-4">
+        <%= link_to link.url.to_s, class: "card h-100 text-decoration-none text-body tool-card", target: (link.new_tab? ? "_blank" : nil) do %>
+          <div class="card-body d-flex flex-column">
+            <div class="d-flex gap-3 align-items-center mb-3">
+              <span class="kind-icon bg-<%= colour %>-subtle text-<%= colour %>-emphasis"><i class="fas fa-<%= icon %>" aria-hidden="true"></i></span>
+              <div><div class="fw-semibold"><%= title %></div><div class="small text-body-secondary"><%= subtitle %></div></div>
+            </div>
+            <p class="thought mb-3"><%= text %></p>
+            <span class="open mt-auto small fw-medium text-primary">Open <i class="fas fa-arrow-right ms-1" aria-hidden="true"></i></span>
+          </div>
+        <% end %>
+      </div>
+    <%- end -%>
+    </div>
+  </section>
+<%- end -%>
+</div>

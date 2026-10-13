@@ -167,6 +167,10 @@ install -m 644 "$HERE"/branding/{ai-factory.css,cdac-logo.svg,favicon.ico} /var/
 { echo ":root { --portal-color: ${PORTAL_COLOR}; }"; cat "$HERE/branding/app-bar.css"; } > /var/www/ood/public/ai-factory/app-bar.css
 chmod 644 /var/www/ood/public/ai-factory/app-bar.css
 install -m 644 "$HERE/../6-keycloak/theme/ai-factory/login/resources/img/bg.jpg" /var/www/ood/public/ai-factory/
+# home page: our tools as cards, a dashboard widget (OOD loads views from /etc/ood/config/apps/dashboard/views)
+install -d /etc/ood/config/apps/dashboard/views/widgets
+OOD_ADMIN=$OOD_ADMIN envsubst '$OOD_ADMIN' < "$HERE/branding/_ai_tools.html.erb" > /etc/ood/config/apps/dashboard/views/widgets/_ai_tools.html.erb
+chmod 644 /etc/ood/config/apps/dashboard/views/widgets/_ai_tools.html.erb
 cat > /etc/ood/config/ondemand.d/ai-factory.yml <<YML
 # Written by OOD-Install/2-ood/setup-ood.sh. Users see changes after "Restart Web Server".
 dashboard_title: "${PORTAL_TITLE}"           # tab title + the logo's alt text
@@ -179,6 +183,12 @@ brand_bg_color: "${PORTAL_COLOR}"
 brand_link_active_bg_color: "rgba(0, 0, 0, 0.3)"
 disable_dashboard_welcome_message: true     # the Open OnDemand logo + "OnDemand provides ..." text
 custom_css_files: ["ai-factory.css"]        # relative to public_url
+# home page = only our tool cards (views/widgets/_ai_tools.html.erb), grouped in sections
+dashboard_layout:
+  rows:
+    - columns:
+        - width: 12
+          widgets: [ai_tools]
 # top bar: no Jobs, My Interactive Sessions, All Apps. Interactive Apps = every app in subcategory "Servers"
 # (Jupyter, VS Code, MLflow, Model Hub, and any new one), so OOD's Desktop (subcategory "Desktops") is left out.
 nav_bar:

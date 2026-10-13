@@ -34,3 +34,54 @@ footer.footer::after {
 body:has(.navbar-brand-logo[aria-current="page"]) {
     background: url("bg.jpg") center / cover no-repeat fixed;
 }
+
+/* home page tool cards (widget _ai_tools.html.erb): same card, icon and bubble as Model Hub's style.css */
+.ai-tools .eyebrow {
+    font-size: .75rem;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: #05295d;
+}
+
+.ai-tools .tool-card {
+    border-color: var(--bs-border-color-translucent);
+    border-radius: .75rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .04);
+    transition: box-shadow .15s, transform .15s, border-color .15s;
+}
+
+.ai-tools .tool-card:hover,
+.ai-tools .tool-card:focus-visible {
+    box-shadow: var(--bs-box-shadow) !important;
+    transform: translateY(-2px);
+    border-color: var(--bs-primary-border-subtle);
+}
+
+.ai-tools .kind-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: .625rem;
+    display: grid;
+    place-items: center;
+    font-size: 1.125rem;
+    flex: none;
+}
+
+/* the tool's line, as a chat bubble (Model Hub's playground) */
+.ai-tools .thought {
+    padding: .5rem .875rem;
+    border-radius: 1rem;
+    border-top-left-radius: .25rem;
+    background: var(--bs-secondary-bg);
+    font-size: .875rem;
+    color: var(--bs-secondary-color);
+}
+
+.ai-tools .open i { transition: transform .15s; }
+.ai-tools .tool-card:hover .open i { transform: translateX(3px); }
+
+.ai-tools .admin-only .tool-card {
+    border-style: dashed;
+    border-color: var(--bs-danger-border-subtle);
+}
