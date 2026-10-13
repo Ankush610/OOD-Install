@@ -12,7 +12,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/../site.conf"
 [ "$(id -u)" = 0 ] || { echo "Run with sudo." >&2; exit 1; }
 
-CERT=/etc/pki/tls/certs/ood.crt
+CERT=$OOD_CERT
 KEY=/etc/pki/tls/private/ood.key
 PORTAL=/etc/ood/config/ood_portal.yml
 HTPASSWD=/etc/ood/htpasswd

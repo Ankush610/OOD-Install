@@ -191,7 +191,12 @@ def cmd_client(client_id, base, secret_file):
         "standardFlowEnabled": True,                 # browser login only
         "implicitFlowEnabled": False, "directAccessGrantsEnabled": False, "serviceAccountsEnabled": False,
         "redirectUris": [f"{base}/oidc"], "webOrigins": [base], "rootUrl": base, "baseUrl": "/",
-        "attributes": {"post.logout.redirect.uris": f"{base}/*", "pkce.code.challenge.method": "S256"},
+        "attributes": {"post.logout.redirect.uris": f"{base}/*", "pkce.code.challenge.method": "S256",
+                       # when Keycloak ends someone's session (remove-user, "sign out other devices", admin console),
+                       # it tells the app's mod_auth_openidc, which drops its own login: the next request goes to
+                       # the login page instead of running on for up to 8 h. Needs the app's certificate trusted.
+                       "backchannel.logout.url": f"{base}/oidc?logout=backchannel",
+                       "backchannel.logout.session.required": "true", "frontchannelLogout": "false"},
     }
     found = a.get(f"/realms/{realm}/clients?clientId={urllib.parse.quote(client_id)}")
     if found:

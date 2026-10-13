@@ -60,6 +60,7 @@ Then open `https://$OOD_SERVERNAME`: the Keycloak login page comes first, then O
 | passwords | `KEYCLOAK_DATA/{admin,db,bootstrap}.pass`, `/etc/keycloak/*.env` (root, 0600) | never on a command line |
 | admin | `KEYCLOAK_ADMIN` in realm `master` | the first-start "temporary" admin is replaced and deleted (`kc.py admin`) |
 | `KC_CACHE=local` | runtime env | one server: without it Keycloak opens a cluster port (57800) on every interface |
+| sign-outs reach OOD (back-channel logout) | client `ood`: `backchannel.logout.url` = `https://$OOD_SERVERNAME/oidc?logout=backchannel` (`kc.py client`); `OOD_CERT` mounted as trusted | when Keycloak ends a session (`remove-user.sh`, "sign out other devices", admin console) it tells OOD's Apache, which drops its own login (else it lasts up to 8 h): the next page goes to the login, background calls get 401 (Model Hub then reloads) |
 | LDAP over ldaps, CA mounted | `Volume=$LDAP_CA:…/truststores/ldap-ca.crt`, `KC_TRUSTSTORE_PATHS` | 389 DS refuses password changes on a plain connection; the name `MASTER_HOST` matches LDAP's certificate |
 | LDAP account `cn=keycloak-passwords` | password in `KEYCLOAK_DATA/ldap.pass`; access rule `keycloak sets passwords` on `ou=People` | may write `userPassword`, nothing else: never the Directory Manager |
 | LDAP attribute mappers read-only | `kc.py realm` | the provider is writable (for passwords), so name/e-mail edits would otherwise go to LDAP (which refuses them) |
@@ -101,6 +102,7 @@ Then open `https://$OOD_SERVERNAME`: the Keycloak login page comes first, then O
 | OOD: `Error: user ... does not exist` after logging in | the Keycloak user isn't a Linux user on master (e.g. a local Keycloak user other than `OOD_ADMIN`) | only LDAP users and `OOD_ADMIN` can use OOD |
 | OOD: login loop or `state` error | old cookies, or `OIDCCryptoPassphrase` changed | clear the site's cookies; the passphrase lives in `/etc/ood/oidc-crypto.passphrase` (keep it) |
 | OOD login broken and you need in now | | `OOD_AUTH=ldap` in `site.conf`, `sudo bash ../2-ood/setup-ood.sh` |
+| a removed / signed-out user's OOD tab keeps working | Keycloak can't reach `https://$OOD_SERVERNAME/oidc` (certificate not trusted, or the name doesn't resolve on master) | `journalctl -u keycloak \| grep -i backchannel`; after renewing OOD's certificate rerun `1-install.sh` + restart Keycloak |
 | `2-realm.sh`: `Keycloak doesn't trust LDAP's CA yet` | Keycloak was installed before passwords were writable | rerun `1-install.sh` (mounts the CA, restarts Keycloak), then `2-realm.sh` |
 | new password refused / "Could not modify attribute" after the first login | Keycloak can't write to LDAP: account, access rule or ldaps | rerun `2-realm.sh` (recreates them and checks); `journalctl -u keycloak \| grep -i ldap` |
 | `remove-user.sh` / admin console: deleting a user fails in Keycloak | Keycloak passes a delete on to LDAP, which its account may not do | delete in LDAP first (`remove-user.sh` does it in that order) |

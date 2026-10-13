@@ -22,6 +22,7 @@ command -v podman >/dev/null || { echo "No podman." >&2; exit 1; }
 curl -sf "http://$REGISTRY/v2/" >/dev/null || { echo "Registry $REGISTRY doesn't answer: run ../0-registry first." >&2; exit 1; }
 ldapsearch -x -LLL -H ldap://localhost -b "$LDAP_BASE" -s base dn >/dev/null 2>&1 ||
   { echo "No LDAP on localhost ($LDAP_BASE): run ../1-ldap/1-server.sh first." >&2; exit 1; }
+[ -f "$OOD_CERT" ] || { echo "No OOD certificate $OOD_CERT: run ../2-ood/setup-ood.sh first." >&2; exit 1; }
 # a port in use is fine only if it's ours (a rerun); anything else (e.g. another Postgres on 5432) must move
 systemctl -q is-active keycloak-db.service keycloak.service 2>/dev/null ||
   for p in "$KEYCLOAK_PORT" "$KEYCLOAK_MGMT_PORT" "$KEYCLOAK_DB_PORT"; do
@@ -119,9 +120,11 @@ Group=$KEYCLOAK_UID
 # Keycloak writes temp files to /opt/keycloak/data; nothing in it needs to survive a restart (all state is in Postgres)
 Tmpfs=/opt/keycloak/data:rw,mode=1777
 Volume=$KEYCLOAK_DATA/themes:/opt/keycloak/themes:ro
-# LDAP's CA (LDAP_CA): Keycloak talks ldaps to LDAP, the only way 389 DS accepts a password change (2-realm.sh)
+# certificates Keycloak trusts: LDAP's CA (ldaps, the only way 389 DS accepts a password change; 2-realm.sh) and
+# OOD's (Keycloak sends "this person is signed out" to https://OOD_SERVERNAME/oidc; kc.py client)
 Volume=$LDAP_CA:/opt/keycloak/conf/truststores/ldap-ca.crt:ro
-Environment=KC_TRUSTSTORE_PATHS=/opt/keycloak/conf/truststores/ldap-ca.crt
+Volume=$OOD_CERT:/opt/keycloak/conf/truststores/ood.crt:ro
+Environment=KC_TRUSTSTORE_PATHS=/opt/keycloak/conf/truststores
 EnvironmentFile=$ENVDIR/keycloak.env
 Environment=KC_DB_URL=jdbc:postgresql://127.0.0.1:$KEYCLOAK_DB_PORT/keycloak KC_DB_USERNAME=keycloak
 Environment=KC_HTTP_ENABLED=true KC_HTTP_HOST=127.0.0.1 KC_HTTP_PORT=$KEYCLOAK_PORT KC_HTTP_MANAGEMENT_PORT=$KEYCLOAK_MGMT_PORT

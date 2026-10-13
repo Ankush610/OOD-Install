@@ -12,9 +12,15 @@ let ME = null, timer = null;
 
 async function api(path, opts = {}) {
   const r = await fetch('api/' + path, {
-    method: opts.method || 'GET', headers: { 'Content-Type': 'application/json' },
+    method: opts.method || 'GET', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
+  // signed out (removed, or "sign out other devices"): OOD's login answers 401 to background calls, or redirects them
+  // to Keycloak. Reload: the page itself then goes to the login page.
+  if (r.status === 401 || (r.redirected && r.url.includes('/protocol/openid-connect/'))) {
+    location.reload();
+    return new Promise(() => {});
+  }
   const data = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
   if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
   return data;
