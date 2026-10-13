@@ -57,6 +57,7 @@ sudo bash group.sh create nlp; sudo bash group.sh add nlp bob carol   # teams (M
 | `2-client.sh` | UID clash check, `sssd.conf` (rfc2307, ldaps, CA pinned, `root:root 0600`), `authselect select sssd with-mkhomedir` |
 | `add-user.sh` | next free UID, user + own group, `ldappasswd -S`, home dir, subuid/subgid on login nodes, MLflow token |
 | `remove-user.sh` | someone leaves: stops everything they run, deletes their logins, namespace, teams, LDAP entries; home and MLflow work only if asked; UID never reused |
+| `set-password.sh` | new one-time password from stdin (forgotten password); used by `menu.sh` and the admin page |
 | `group.sh` | teams: `groupOfNames` under `ou=Groups` without `posixGroup` (no gidNumber: not Linux groups, no file rights); create / add / remove / delete / list; re-syncs the people concerned into Model Hub (`aistack/teams` on their namespace) |
 | `menu.sh` | the menu above (whiptail). Passwords: set (`ldappasswd -T`, as the Directory Manager), test (`ldapwhoami`); nobody can see one, LDAP keeps only the hash |
 | `import-local-users.sh` | optional: local users -> LDAP with the same UID and password hash, then checks each UID |

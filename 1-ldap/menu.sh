@@ -85,14 +85,9 @@ set_pw() {
   [ -n "$p1" ] || { say "Empty password: nothing changed."; return 0; }
   p2=$(ask --passwordbox "Same password again:" 8 60) || return 0
   [ "$p1" = "$p2" ] || { say "The two passwords differ: nothing changed."; return 0; }
-  if out=$(ldappasswd "${L[@]}" -T <(printf %s "$p1") "$(dn "$u")" 2>&1); then
-    # one-time, like add-user.sh: they choose their own at the next web login
-    local next="Keycloak not installed: it stays their password."
-    if [ -f "$KEYCLOAK_DATA/admin.pass" ]; then
-      next=$(KC_URL=http://127.0.0.1:$KEYCLOAK_PORT$KEYCLOAK_PATH KEYCLOAK_ADMIN=$KEYCLOAK_ADMIN KEYCLOAK_DATA=$KEYCLOAK_DATA \
-             KEYCLOAK_REALM=$KEYCLOAK_REALM python3 "$HERE/../6-keycloak/kc.py" must-change "$u" 2>&1) || next="NOT one-time: $next"
-    fi
-    say "Password of $u changed. It works now for SSH, Slurm, OOD and MLflow."$'\n'"$next"
+  # one-time, like add-user.sh: they choose their own at the next web login
+  if out=$(printf '%s\n' "$p1" | bash "$HERE/set-password.sh" "$u" 2>&1); then
+    say "$out"
   else
     say "Not changed:"$'\n'"$out"
   fi

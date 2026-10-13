@@ -4,12 +4,18 @@
 # SSH, Slurm, OOD and the MLflow UI. If MLflow is running, it also gets their MLflow job token; if Model Hub
 # is set up, their k8s namespace and login.
 # Run on master: sudo bash add-user.sh <username>     (asks for the password)
+#                ... add-user.sh <username> --password-stdin   (one line on stdin: the admin page, 8-admin)
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/../site.conf"
 [ "$(id -u)" = 0 ] || { echo "Run with sudo." >&2; exit 1; }
-U=${1:?usage: sudo bash add-user.sh <username>}
+U=${1:?usage: sudo bash add-user.sh <username> [--password-stdin]}
+PW=""
+if [ "${2:-}" = --password-stdin ]; then
+  IFS= read -r PW || true
+  [ ${#PW} -ge 8 ] || { echo "Password too short (8+ characters)." >&2; exit 1; }
+fi
 [[ "$U" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || { echo "Bad username: $U" >&2; exit 1; }
 getent passwd "$U" >/dev/null && { echo "$U already exists." >&2; exit 1; }
 # a removed person's kept home (remove-user.sh): step 4 would hand it, files and all, to the new person
@@ -50,7 +56,11 @@ EOF
 
 echo "== 3. One-time password (typed, never on the command line)"
 # 389 DS refuses password changes on a plain connection (error 13 "Confidentiality required"): ldaps
-LDAPTLS_CACERT="$LDAP_CA" ldappasswd -x -H "$LDAP_URI" -D "$LDAP_DM" -y "$LDAP_DM_PASS_FILE" -S "uid=$U,ou=People,$LDAP_BASE"
+if [ -n "$PW" ]; then
+  LDAPTLS_CACERT="$LDAP_CA" ldappasswd -x -H "$LDAP_URI" -D "$LDAP_DM" -y "$LDAP_DM_PASS_FILE" -T <(printf %s "$PW") "uid=$U,ou=People,$LDAP_BASE"
+else
+  LDAPTLS_CACERT="$LDAP_CA" ldappasswd -x -H "$LDAP_URI" -D "$LDAP_DM" -y "$LDAP_DM_PASS_FILE" -S "uid=$U,ou=People,$LDAP_BASE"
+fi
 
 echo "== 4. Home on the shared /home"
 install -d -m 700 -o "$ID" -g "$ID" "/home/$U"

@@ -19,6 +19,7 @@ This cluster: laptop → `network-node` (10.208.34.138) → `master` (192.168.40
 1-ldap/2-client.sh          every node: UID clash check, SSSD, authselect
 1-ldap/add-user.sh          new person (replaces useradd), subuid/subgid on LOGIN_NODES, also runs 3-mlflow/3-sync-tokens.sh; never reuses a UID (LDAP_LAST_UID_FILE)
 1-ldap/remove-user.sh       someone leaves: jobs/sessions/endpoints stopped, namespace, MLflow + Keycloak login, teams, LDAP entries; home + MLflow work only with flags
+1-ldap/set-password.sh      one-time password from stdin (menu.sh, 8-admin); Keycloak must-change
 1-ldap/group.sh             teams (groupOfNames, not Linux groups) for Model Hub sharing; re-syncs members via 5-model-hub/2-sync-users.sh
 2-ood/setup-ood.sh          OOD, AuthBasicProvider "ldap file", self-signed cert, Slurm cluster file
 3-mlflow/1-build-image.sh   image/ -> MLFLOW_IMAGE (no root)
@@ -33,6 +34,7 @@ This cluster: laptop → `network-node` (10.208.34.138) → `master` (192.168.40
 6-keycloak/2-realm.sh       realm CLUSTER_ID: LDAP users + groups, writable for passwords only (LDAP account cn=keycloak-passwords + access rule; ldaps); kc.py = admin REST; Apache /auth proxy is in 2-ood
 7-jupyter/1-install-jupyter.sh  standalone Python + venv + requirements.txt -> JUPYTER_ROOT/<lab>-py<py>, current symlink
 7-jupyter/2-install-ood-app.sh  4-vscode's page + ood-app/jupyter -> /var/www/ood/apps/sys/jupyter (site.json "app": "jupyter")
+8-admin/1-install.sh        root helper for the admin page: aistack-admin.py -> ADMIN_HELPER, sudo rule for OOD_ADMIN only, ADMIN_LOG
 ```
 
 Local sanity checks (no tests or linters):
