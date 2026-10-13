@@ -584,7 +584,11 @@ function playground(ep, info) {
   const t = $('#tab'), off = ep.state !== 'ready' ? 'disabled' : '';
   if (ep.runtime === 'vllm') {
     const msgs = [];
-    t.innerHTML = `<div class="row g-4"><div class="col-lg-8"><div class="card"><div class="card-body">
+    // Chat = our guess of how to talk to it; JSON = the raw request (OpenAI chat format), for when the guess doesn't fit
+    t.innerHTML = `<div class="btn-group btn-group-sm mb-3" role="group" aria-label="Input mode">
+        <input type="radio" class="btn-check" name="mode" id="m-chat" value="chat" checked><label class="btn btn-outline-secondary" for="m-chat">Chat</label>
+        <input type="radio" class="btn-check" name="mode" id="m-json" value="json"><label class="btn btn-outline-secondary" for="m-json">JSON</label></div>
+      <div data-box="chat"><div class="row g-4"><div class="col-lg-8"><div class="card"><div class="card-body">
         <div class="chat mb-3" id="log"><div class="text-body-secondary text-center my-auto small" id="hint"><i class="bi bi-chat-dots fs-3 d-block mb-2 opacity-50"></i>Send a message to start chatting.</div></div>
         <form class="input-group" id="chatf"><input class="form-control" id="say" placeholder="${off ? 'Available when the endpoint is ready' : 'Type a message…'}" autocomplete="off" aria-label="Message" ${off}>
           <button class="btn btn-primary" id="send" ${off}><i class="bi bi-send"></i></button></form></div></div></div>
@@ -595,7 +599,16 @@ function playground(ep, info) {
         <input class="form-range" id="temp" type="range" min="0" max="2" step="0.1" value="0.7">
         <div class="d-flex small text-body-secondary"><span>Focused</span><span class="ms-auto">Creative</span></div>
         <button class="btn btn-sm btn-outline-secondary w-100 mt-3" id="clear" type="button"><i class="bi bi-eraser me-1"></i>New chat</button>
-      </div></div></div></div>`;
+      </div></div></div></div></div>
+      <div data-box="json" hidden><div class="row g-4"><div class="col-lg-7"><div class="card h-100"><div class="card-body">
+        <div class="eyebrow mb-3">Request body <span class="text-body-secondary text-lowercase fw-normal">(sent to /v1/chat/completions)</span></div>
+        <textarea class="form-control font-monospace small" id="json" rows="12" aria-label="Request body (JSON)">${h(JSON.stringify(exampleBody(ep, info), null, 2))}</textarea>
+        <button class="btn btn-primary mt-3" id="run" ${off}><i class="bi bi-play-fill me-1"></i>Run</button></div></div></div>
+      <div class="col-lg-5"><div class="card h-100"><div class="card-body"><div class="eyebrow mb-3">Result</div>
+        <div id="res" class="text-body-secondary small">Edit the JSON and press <b>Run</b>.</div></div></div></div></div></div>`;
+    app.querySelectorAll('[name="mode"]').forEach(r => r.onchange = () =>
+      app.querySelectorAll('[data-box]').forEach(b => { b.hidden = b.dataset.box !== r.value; }));
+    $('#run').onclick = () => runJson(ep);
     $('#temp').oninput = () => { $('#tv').textContent = $('#temp').value; };
     const draw = () => { $('#log').innerHTML = msgs.map(m => `<div class="bubble ${m.role}">${h(m.content)}</div>`).join('')
                                              || '<div class="text-body-secondary text-center my-auto small"><i class="bi bi-chat-dots fs-3 d-block mb-2 opacity-50"></i>Send a message to start chatting.</div>'; $('#log').scrollTop = 1e9; };
@@ -679,20 +692,29 @@ function playground(ep, info) {
     blank();
   }
 
-  $('#run').onclick = async () => {
+  $('#run').onclick = () => {
     let body;
     try {
       if (mode === 'image') body = { inputs: canvasToTensor($('#pad'), L, $('#scale').value, $('#inv').checked).tensor };
       else if (mode === 'form') body = { dataframe_split: { columns: cols.map(c => c.name), data: [cols.map(c => {
               const el = app.querySelector(`[data-col="${CSS.escape(c.name)}"]`);
               return num(c) ? +el.value : c.type === 'boolean' ? el.value === 'true' : el.value; })] } };
-      else body = JSON.parse($('#json').value);
-    } catch (e) { $('#res').innerHTML = alertBox('That isn\'t valid JSON: ' + e.message); return; }
-    $('#run').disabled = true; $('#res').innerHTML = '<div class="spinner-border spinner-border-sm text-primary"></div>';
-    try { $('#res').innerHTML = renderOutput(await api(`endpoints/${enc(ep.name)}/predict`, { method: 'POST', body })); }
-    catch (e) { $('#res').innerHTML = alertBox(e); }
-    $('#run').disabled = false;
+      else return runJson(ep);
+    } catch (e) { $('#res').innerHTML = alertBox(e); return; }
+    send(ep, body);
   };
+}
+// the JSON box (every endpoint kind): sent as typed, the answer shown raw
+function runJson(ep) {
+  let body;
+  try { body = JSON.parse($('#json').value); } catch (e) { $('#res').innerHTML = alertBox('That isn\'t valid JSON: ' + e.message); return; }
+  send(ep, body);
+}
+async function send(ep, body) {
+  $('#run').disabled = true; $('#res').innerHTML = '<div class="spinner-border spinner-border-sm text-primary"></div>';
+  try { $('#res').innerHTML = renderOutput(await api(`endpoints/${enc(ep.name)}/predict`, { method: 'POST', body })); }
+  catch (e) { $('#res').innerHTML = alertBox(e); }
+  $('#run').disabled = false;
 }
 
 // Everything an app (Flask, FastAPI, Streamlit, Gradio, a notebook, a script…) needs to call this endpoint, + one curl.
