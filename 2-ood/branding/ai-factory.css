@@ -35,7 +35,8 @@ body:has(.navbar-brand-logo[aria-current="page"]) {
     background: url("bg.jpg") center / cover no-repeat fixed;
 }
 
-/* home page tool cards (widget _ai_tools.html.erb): same card, icon and bubble as Model Hub's style.css */
+/* home page tool cards (widget _ai_tools.html.erb): same card and bubble as Model Hub's style.css, icon in a box
+   like the apps' brand-mark (white Bootstrap Icon on a colour per tool; bootstrap-icons/ is loaded before this file) */
 .ai-tools .eyebrow {
     font-size: .75rem;
     font-weight: 600;
@@ -66,7 +67,17 @@ body:has(.navbar-brand-logo[aria-current="page"]) {
     place-items: center;
     font-size: 1.125rem;
     flex: none;
+    color: #fff;
 }
+
+/* one colour per tool (colour in the widget's list), all equally bright */
+.ai-tools .icon-orange { background: #f37726; }
+.ai-tools .icon-blue   { background: #2f74d0; }
+.ai-tools .icon-grey   { background: #6b7280; }
+.ai-tools .icon-teal   { background: #13a3b8; }
+.ai-tools .icon-purple { background: #8b5cf6; }
+.ai-tools .icon-yellow { background: #e0a800; }
+.ai-tools .icon-green  { background: #28a745; }
 
 /* the tool's line, as a chat bubble (Model Hub's playground) */
 .ai-tools .thought {
@@ -83,5 +94,5 @@ body:has(.navbar-brand-logo[aria-current="page"]) {
 
 .ai-tools .admin-only .tool-card {
     border-style: dashed;
-    border-color: var(--bs-danger-border-subtle);
+    border-color: var(--bs-success-border-subtle);
 }

@@ -7,27 +7,29 @@
 -%>
 <%-
   # [section, section icon, extra class, [[app folder, title, icon, colour, subtitle, text], ...]]
+  # colour = class icon-<colour> in ai-factory.css (not inline style: OOD's CSP can block style attributes)
+  # icons: Bootstrap Icons, the same as each app's own top bar (Model Hub's copy, installed by setup-ood.sh)
   sections = [
-    ["Develop", "code", "", [
-      ["jupyter", "Jupyter", "book", "warning", "JupyterLab on the cluster",
+    ["Develop", "code-slash", "", [
+      ["jupyter", "Jupyter", "journal-code", "orange", "JupyterLab on the cluster",
        "Interactive notebooks on GPU nodes, with your home directory and datasets already in place."],
-      ["vscode", "VS Code", "code", "primary", "Code editor in your browser",
+      ["vscode", "VS Code", "code-slash", "blue", "Code editor in your browser",
        "A full development environment on the cluster. Edit, run and debug code next to your data."],
-      ["shell", "Shell", "terminal", "secondary", "Terminal on the login node",
+      ["shell", "Shell", "terminal", "grey", "Terminal on the login node",
        "Command-line access for submitting Slurm jobs, loading modules and managing files."],
     ]],
-    ["Track & Deploy", "rocket", "", [
-      ["mlflow_k8s", "MLflow", "chart-line", "success", "Experiment tracking",
+    ["Track & Deploy", "rocket-takeoff", "", [
+      ["mlflow_k8s", "MLflow", "graph-up", "teal", "Experiment tracking",
        "Record parameters, metrics and artifacts for every training run, and compare results across experiments."],
-      ["model_hub", "Model Hub", "cubes", "info", "Serve models as endpoints",
+      ["model_hub", "Model Hub", "boxes", "purple", "Serve models as endpoints",
        "Deploy registered models as API endpoints, test them in the playground and call them from your scripts."],
     ]],
-    ["Data & Cluster", "server", "", [
-      ["files", "Files", "folder-open", "warning", "Home and scratch storage",
+    ["Data & Cluster", "hdd-stack", "", [
+      ["files", "Files", "folder2-open", "yellow", "Home and scratch storage",
        "Browse, upload and manage files in your home and scratch directories."],
     ]],
-    ["Admin", "user-shield", "admin-only", [
-      ["aistack_admin", "AI Stack Admin", "user-shield", "danger", "Cluster administration",
+    ["Admin", "shield-lock", "admin-only", [
+      ["aistack_admin", "Admin Panel", "shield-lock", "green", "Cluster administration",
        "Monitor GPU usage across the cluster and manage users, teams and resource limits."],
     ]],
   ]
@@ -40,18 +42,18 @@
   <%- cards = tools.filter_map { |name, *card| (link = apps[name]&.links&.first) && [link, *card] } -%>
   <%- next if cards.empty? -%>
   <section class="mb-4 <%= extra_class %>">
-    <h2 class="eyebrow mb-2"><i class="fas fa-<%= section_icon %> me-2" aria-hidden="true"></i><%= heading %></h2>
+    <h2 class="eyebrow mb-2"><i class="bi bi-<%= section_icon %> me-2" aria-hidden="true"></i><%= heading %></h2>
     <div class="row g-3">
     <%- cards.each do |link, title, icon, colour, subtitle, text| -%>
       <div class="col-md-6 col-lg-4">
         <%= link_to link.url.to_s, class: "card h-100 text-decoration-none text-body tool-card", target: (link.new_tab? ? "_blank" : nil) do %>
           <div class="card-body d-flex flex-column">
             <div class="d-flex gap-3 align-items-center mb-3">
-              <span class="kind-icon bg-<%= colour %>-subtle text-<%= colour %>-emphasis"><i class="fas fa-<%= icon %>" aria-hidden="true"></i></span>
+              <span class="kind-icon icon-<%= colour %>"><i class="bi bi-<%= icon %>" aria-hidden="true"></i></span>
               <div><div class="fw-semibold"><%= title %></div><div class="small text-body-secondary"><%= subtitle %></div></div>
             </div>
             <p class="thought mb-3"><%= text %></p>
-            <span class="open mt-auto small fw-medium text-primary">Open <i class="fas fa-arrow-right ms-1" aria-hidden="true"></i></span>
+            <span class="open mt-auto small fw-medium text-primary">Open <i class="bi bi-arrow-right ms-1" aria-hidden="true"></i></span>
           </div>
         <% end %>
       </div>

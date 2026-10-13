@@ -167,6 +167,10 @@ install -m 644 "$HERE"/branding/{ai-factory.css,cdac-logo.svg,favicon.ico} /var/
 { echo ":root { --portal-color: ${PORTAL_COLOR}; }"; cat "$HERE/branding/app-bar.css"; } > /var/www/ood/public/ai-factory/app-bar.css
 chmod 644 /var/www/ood/public/ai-factory/app-bar.css
 install -m 644 "$HERE/../6-keycloak/theme/ai-factory/login/resources/img/bg.jpg" /var/www/ood/public/ai-factory/
+# icons of the home page cards: the apps' own set (Bootstrap Icons, Model Hub's copy); OOD itself only has Font Awesome
+rm -rf /var/www/ood/public/ai-factory/bootstrap-icons
+cp -r "$HERE/../5-model-hub/ood-app/model_hub/public/vendor/bootstrap-icons" /var/www/ood/public/ai-factory/
+chmod -R a+rX /var/www/ood/public/ai-factory/bootstrap-icons
 # home page: our tools as cards, a dashboard widget (OOD loads views from /etc/ood/config/apps/dashboard/views)
 install -d /etc/ood/config/apps/dashboard/views/widgets
 OOD_ADMIN=$OOD_ADMIN envsubst '$OOD_ADMIN' < "$HERE/branding/_ai_tools.html.erb" > /etc/ood/config/apps/dashboard/views/widgets/_ai_tools.html.erb
@@ -182,7 +186,7 @@ navbar_type: dark
 brand_bg_color: "${PORTAL_COLOR}"
 brand_link_active_bg_color: "rgba(0, 0, 0, 0.3)"
 disable_dashboard_welcome_message: true     # the Open OnDemand logo + "OnDemand provides ..." text
-custom_css_files: ["ai-factory.css"]        # relative to public_url
+custom_css_files: ["bootstrap-icons/bootstrap-icons.min.css", "ai-factory.css"]   # relative to public_url
 # home page = only our tool cards (views/widgets/_ai_tools.html.erb), grouped in sections
 dashboard_layout:
   rows:
