@@ -15,8 +15,10 @@ things, checks every argument, and calls the same scripts the admin runs by hand
   teams     team-create TEAM | team-delete TEAM                                      1-ldap/group.sh
             team-add TEAM USER... | team-remove TEAM USER...
   limits    limits USER --gpus N | --max-hours H | --reset                           5-model-hub/2-sync-users.sh
-  models    stop-endpoint USER NAME       stops the pod (= its Slurm job, frees the GPU); the endpoint stays, "stopped"
-  jobs      cancel-job JOBID              scancel one Slurm job (a session or a training job; endpoints: stop-endpoint)
+  models    stop-endpoint USER NAME REASON  stops the pod (= its Slurm job, frees the GPU); the endpoint stays, "stopped";
+                                          REASON = the message its owner sees (Model Hub, home page)
+  jobs      cancel-job JOBID REASON       scancel one Slurm job (a session or a training job; endpoints: stop-endpoint);
+                                          REASON = the message its owner sees (home page, VS Code/Jupyter page)
 
 Answer: one JSON object on stdout, {"ok": true|false, "output": "<what the script printed>", "data": ...}.
 Every change goes to ADMIN_LOG (who, what, result; never a password). One change at a time (a lock).
@@ -36,6 +38,7 @@ NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")         # a Linux user name (= ad
 TEAM = re.compile(r"^[a-z_][a-z0-9_.-]{0,31}$")        # = group.sh
 ENDPOINT = re.compile(r"^[a-z0-9]([a-z0-9-]{0,40}[a-z0-9])?$")   # = render.py NAME
 LIMITS = {"--gpus": (0, 8), "--max-hours": (1, 24 * 365)}
+REASON_MAX = 1000                          # characters; the admin page's textarea has the same maxlength
 
 
 class Bad(Exception):
@@ -52,6 +55,14 @@ def need(rx, v, what):
     if not isinstance(v, str) or not rx.match(v):
         raise Bad(f"bad {what}: {v!r}")
     return v
+
+
+def reason(v):
+    """The admin's message to the owner of what they stop: plain text, newlines allowed."""
+    why = v.replace("\r\n", "\n").strip()
+    if not why or len(why) > REASON_MAX or re.search(r"[\x00-\x08\x0b-\x1f\x7f]", why):
+        raise Bad(f"the reason: 1..{REASON_MAX} characters of text (the user reads it)")
+    return why
 
 
 def plan(action, args, S):
@@ -82,12 +93,12 @@ def plan(action, args, S):
             if not lo <= int(opt[1]) <= hi:
                 raise Bad(f"{opt[0]} must be {lo}..{hi}")
         return ["bash", s("5-model-hub/2-sync-users.sh"), u, *opt], False, True
-    if action == "stop-endpoint" and len(args) == 2:
-        return ["stop-endpoint", need(NAME, args[0], "user"), need(ENDPOINT, args[1], "endpoint")], False, True
-    if action == "cancel-job" and len(args) == 1:
+    if action == "stop-endpoint" and len(args) == 3:
+        return ["stop-endpoint", need(NAME, args[0], "user"), need(ENDPOINT, args[1], "endpoint"), reason(args[2])], False, True
+    if action == "cancel-job" and len(args) == 2:
         if not re.fullmatch(r"[0-9]{1,10}", args[0]):
             raise Bad(f"bad job id: {args[0]!r}")
-        return ["cancel-job", args[0]], False, True
+        return ["cancel-job", args[0], reason(args[1])], False, True
     if action in ("users", "teams", "endpoints", "log", "jobs") and not args:
         return [action], False, False
     raise Bad(f"unknown action or wrong arguments: {action} {args}")
@@ -214,7 +225,7 @@ def jobs(S):
     return jobs_from(sq, eps, S.get("BRIDGE_PARTITION", "slurm-bridge"), hn)
 
 
-def cancel_job(S, jobid):
+def cancel_job(S, jobid, why):
     slurm = {**os.environ, "SLURM_CONF": S["SLURM_CONF"]}
     sq = json.loads(subprocess.run([os.path.join(S["SLURM_BIN"], "squeue"), "-j", jobid, "--json"], capture_output=True,
                                    text=True, env=slurm).stdout or "{}").get("jobs", [])
@@ -223,35 +234,47 @@ def cancel_job(S, jobid):
     if sq[0].get("partition") == S.get("BRIDGE_PARTITION", "slurm-bridge"):
         raise Bad(f"job {jobid} is a Model Hub endpoint: use stop-endpoint (keeps it listed, the owner can redeploy)")
     subprocess.run([os.path.join(S["SLURM_BIN"], "scancel"), jobid], capture_output=True, text=True, check=True, env=slurm)
-    # the VS Code / Jupyter page reads this to say "stopped by the admin" instead of the session just vanishing.
-    # <jobname>.<jobid>, owned by the job's user in a sticky dir (like /tmp): only they can remove it (its bin button)
+    app = sq[0].get("name") if re.fullmatch(r"[a-z_]{1,32}", sq[0].get("name") or "") else "job"   # user-chosen: no paths
+    notify(S, sq[0]["user_name"], f"{app}.{jobid}", why)
+    return f"cancelled job {jobid} ({sq[0].get('name')}, {sq[0].get('user_name')})"
+
+
+def notify(S, user, key, why):
+    """ADMIN_NOTICES/<key> = "admin <when>" + the reason, for the owner of what was stopped."""
+    # the user's pages read this: "admin <when>" + the reason, shown behind a message icon (OOD home page widget,
+    # VS Code / Jupyter page) instead of the job just vanishing. <app>.<id>, owned by the user in a
+    # sticky dir (like /tmp): only they can remove it (its bin button); 600: the reason is for them only
     # ponytail: notices of removed users stay (tiny files); clean them in remove-user.sh if it ever matters
-    d = S["ADMIN_NOTICES"]
+    uid, d = pwd.getpwnam(user).pw_uid, S["ADMIN_NOTICES"]     # KeyError: no such account (before any file exists)
     os.makedirs(d, exist_ok=True)
     os.chmod(d, 0o1777)
-    app = sq[0].get("name") if re.fullmatch(r"[a-z_]{1,32}", sq[0].get("name") or "") else "job"   # user-chosen: no paths
-    f = os.path.join(d, f"{app}.{jobid}")
+    f = os.path.join(d, key)
     if os.path.lexists(f):
         os.unlink(f)
-    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)   # never through a planted symlink
-    os.fchown(fd, pwd.getpwnam(sq[0]["user_name"]).pw_uid, -1)
+    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)   # never through a planted symlink
+    os.fchown(fd, uid, -1)
     with os.fdopen(fd, "w") as fh:
-        fh.write(f"admin {stamp()}\n")
-    return f"cancelled job {jobid} ({sq[0].get('name')}, {sq[0].get('user_name')})"
+        fh.write(f"admin {stamp()}\n{why}\n")
 
 
 def stamp():
     return time.strftime("%Y-%m-%d %H:%M", time.localtime())
 
 
-def stop_endpoint(user, name):
+def stop_endpoint(S, user, name, why):
     ns = f"u-{user}"
     svc = json.loads(kubectl("-n", ns, "get", "svc", name, "-o", "json"))     # fails if none (kubectl: no name + -l)
     if "model-hub/runtime" not in svc["metadata"].get("labels", {}):
         raise Bad(f"{name} is not a Model Hub endpoint")
-    kubectl("-n", ns, "annotate", "svc", name, "--overwrite", f"model-hub/stopped-by=admin {stamp()}")
+    kubectl("-n", ns, "annotate", "svc", name, "--overwrite", f"model-hub/stopped-by=admin {stamp()}",
+            f"model-hub/stop-reason={why}")              # Model Hub shows both behind an envelope; a redeploy removes them
     # the Service stays: Model Hub shows it "stopped" and the owner can deploy it again
-    return kubectl("-n", ns, "delete", "pod", name, "--ignore-not-found", "--wait=false").strip() or f"{name}: was not running"
+    out = kubectl("-n", ns, "delete", "pod", name, "--ignore-not-found", "--wait=false").strip() or f"{name}: was not running"
+    try:                                               # home page envelope too; endpoint names repeat across users
+        notify(S, user, f"endpoint.{user}.{name}", why)
+    except KeyError:                                   # no Linux account for them here: Model Hub still shows it
+        out += f"\n(no home page message: {user} has no account on this machine)"
+    return out
 
 
 # ---------- the request ----------
@@ -290,9 +313,9 @@ def main(argv):
         fcntl.flock(lock, fcntl.LOCK_EX)               # one change at a time (add-user picks max UID + 1)
         try:
             if cmd[0] == "stop-endpoint":
-                out, ok = stop_endpoint(cmd[1], cmd[2]), True
+                out, ok = stop_endpoint(S, cmd[1], cmd[2], cmd[3]), True
             elif cmd[0] == "cancel-job":
-                out, ok = cancel_job(S, cmd[1]), True
+                out, ok = cancel_job(S, cmd[1], cmd[2]), True
             else:
                 r = subprocess.run(cmd, input=(pw + "\n") if wants_pw else "", stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True,      # one stream: warnings where they happened
@@ -312,15 +335,17 @@ def test():
     S = {"KEEP_LOCAL": "admin", "OOD_ADMIN": "admin"}
     good = [("add-user", ["bob"]), ("remove-user", ["bob", "--delete-home"]), ("set-password", ["bob"]),
             ("team-create", ["nlp"]), ("team-add", ["nlp", "bob", "carol"]), ("limits", ["bob", "--gpus", "2"]),
-            ("limits", ["bob", "--reset"]), ("stop-endpoint", ["bob", "my-ep"]), ("endpoints", []), ("log", []), ("jobs", []), ("cancel-job", ["1382"])]
+            ("limits", ["bob", "--reset"]), ("stop-endpoint", ["bob", "my-ep", "Idle for 2 days."]), ("endpoints", []), ("log", []), ("jobs", []),
+            ("cancel-job", ["1382", "Idle GPU for 6 hours.\nPlease use sbatch for long runs."])]
     for a, args in good:
         plan(a, args, S)
     bad = [("add-user", ["Bob"]), ("add-user", ["bob;rm -rf /"]), ("add-user", ["-rf"]), ("remove-user", ["admin"]),
            ("remove-user", ["bob", "--yes"]), ("remove-user", ["bob", "--delete-home", "--delete-home"]),
            ("team-add", ["nlp"]), ("team-add", ["nlp", "../x"]), ("limits", ["bob", "--gpus", "99"]),
-           ("limits", ["bob", "--gpus", "-1"]), ("limits", ["bob", "--cpu", "2"]), ("stop-endpoint", ["bob", "A_B"]),
-           ("users", ["x"]), ("rm", ["-rf", "/"]), ("add-user", []), ("cancel-job", ["1382;id"]), ("cancel-job", ["-1"]),
-           ("cancel-job", ["1", "2"])]
+           ("limits", ["bob", "--gpus", "-1"]), ("limits", ["bob", "--cpu", "2"]), ("stop-endpoint", ["bob", "A_B", "x"]), ("stop-endpoint", ["bob", "my-ep"]), ("stop-endpoint", ["bob", "my-ep", " "]),
+           ("users", ["x"]), ("rm", ["-rf", "/"]), ("add-user", []), ("cancel-job", ["1382;id", "x"]), ("cancel-job", ["-1", "x"]),
+           ("cancel-job", ["1382"]), ("cancel-job", ["1382", " \n "]), ("cancel-job", ["1382", "x\x1b[2J"]),
+           ("cancel-job", ["1382", "x" * 1001]), ("cancel-job", ["1", "a", "b"])]
     for a, args in bad:
         try:
             plan(a, args, S)
@@ -330,6 +355,7 @@ def test():
     cmd, pw, change = plan("remove-user", ["bob", "--delete-mlflow"], S)
     assert cmd[-2:] == ["--delete-mlflow", "--yes"] and not pw and change
     assert plan("add-user", ["bob"], S)[1] is True                       # password from stdin, never in argv
+    assert plan("cancel-job", ["7", " why\r\nnow "], S)[0] == ["cancel-job", "7", "why\nnow"]
     rows = endpoints_from(
         svcs=[{"metadata": {"namespace": "u-bob", "name": "llm", "labels": {"model-hub/runtime": "vllm"},
                             "annotations": {"model-hub/model": "/models/q", "model-hub/expires": "2026-10-14T10:00:00Z"}}},

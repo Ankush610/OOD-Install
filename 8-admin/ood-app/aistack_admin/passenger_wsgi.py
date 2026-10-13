@@ -79,10 +79,10 @@ def route(method, path, body):
                 if names:
                     out.append(helper(f"team-{op}", a[1], *names)["output"])
             return {"output": "".join(out)}
-        if len(a) == 4 and a[0] == "endpoints" and a[3] == "stop":  # endpoints/<owner>/<name>/stop
-            return helper("stop-endpoint", a[1], a[2])
-        if len(a) == 3 and a[0] == "jobs" and a[2] == "cancel":     # jobs/<id>/cancel (sessions, training jobs)
-            return helper("cancel-job", a[1])
+        if len(a) == 4 and a[0] == "endpoints" and a[3] == "stop":  # endpoints/<owner>/<name>/stop {reason}
+            return helper("stop-endpoint", a[1], a[2], text(body, "reason"))
+        if len(a) == 3 and a[0] == "jobs" and a[2] == "cancel":     # jobs/<id>/cancel {reason} (sessions, training jobs)
+            return helper("cancel-job", a[1], text(body, "reason"))
     if method == "DELETE" and len(a) == 2 and a[0] == "teams":
         return helper("team-delete", a[1])
     raise Fail(404, f"no route {method} {path}")

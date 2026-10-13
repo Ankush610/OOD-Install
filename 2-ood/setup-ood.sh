@@ -175,6 +175,24 @@ chmod -R a+rX /var/www/ood/public/ai-factory/bootstrap-icons
 install -d /etc/ood/config/apps/dashboard/views/widgets
 OOD_ADMIN=$OOD_ADMIN envsubst '$OOD_ADMIN' < "$HERE/branding/_ai_tools.html.erb" > /etc/ood/config/apps/dashboard/views/widgets/_ai_tools.html.erb
 chmod 644 /etc/ood/config/apps/dashboard/views/widgets/_ai_tools.html.erb
+# top bar: a bell left of Help with the admin's messages (8-admin writes them to ADMIN_NOTICES). OOD has no setting
+# for it: the same views folder takes the place of its (empty here) Develop menu. x / Clear all -> app aistack_notices
+install -d /etc/ood/config/apps/dashboard/views/layouts/nav
+ADMIN_NOTICES=$ADMIN_NOTICES envsubst '$ADMIN_NOTICES' < "$HERE/branding/_notifications.html.erb" \
+  > /etc/ood/config/apps/dashboard/views/layouts/nav/_develop_dropdown.html.erb
+chmod 644 /etc/ood/config/apps/dashboard/views/layouts/nav/_develop_dropdown.html.erb
+rm -rf /var/www/ood/apps/sys/aistack_notices
+install -d -m 755 /var/www/ood/apps/sys/aistack_notices/tmp
+install -m 644 "$HERE"/notices/{manifest.yml,passenger_wsgi.py} /var/www/ood/apps/sys/aistack_notices/
+printf '{"notices": "%s"}\n' "$ADMIN_NOTICES" > /var/www/ood/apps/sys/aistack_notices/site.json
+chmod 644 /var/www/ood/apps/sys/aistack_notices/site.json
+touch /var/www/ood/apps/sys/aistack_notices/tmp/restart.txt      # Passenger reloads it in running web servers
+# a new sys app gets its nginx config (shared by all users) only from OOD's "Initialize App" page on the first visit:
+# the bell only POSTs in the background and would get a 404. Stage it now, then reload the running per-user servers
+/opt/ood/nginx_stage/sbin/nginx_stage app --user="$OOD_ADMIN" --sub-uri=/pun --sub-request=/sys/aistack_notices --skip-nginx
+for u in $(/opt/ood/nginx_stage/sbin/nginx_stage nginx_list); do
+  /opt/ood/nginx_stage/sbin/nginx_stage nginx --user="$u" --signal=reload >/dev/null || true
+done
 cat > /etc/ood/config/ondemand.d/ai-factory.yml <<YML
 # Written by OOD-Install/2-ood/setup-ood.sh. Users see changes after "Restart Web Server".
 dashboard_title: "${PORTAL_TITLE}"           # tab title + the logo's alt text

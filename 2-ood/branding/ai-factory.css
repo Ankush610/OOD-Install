@@ -96,3 +96,35 @@ body:has(.navbar-brand-logo[aria-current="page"]) {
     border-style: dashed;
     border-color: var(--bs-success-border-subtle);
 }
+
+/* the bell in the top bar (_notifications.html.erb): a dropdown list of the admin's messages, each with an x */
+#aistack-notes .notes-count {
+    font-size: .65rem;
+    vertical-align: top;
+}
+
+#aistack-notes .notes-menu {
+    width: min(24rem, 92vw);
+}
+
+#aistack-notes .notes-list {
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+#aistack-notes .note + .note {
+    border-top: 1px solid var(--bs-border-color-translucent);
+}
+
+#aistack-notes .note .min-w-0 {
+    min-width: 0;
+}
+
+#aistack-notes .note .flex-none {
+    flex: none;
+}
+
+#aistack-notes .note-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}

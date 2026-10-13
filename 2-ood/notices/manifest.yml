@@ -1,0 +1,4 @@
+---
+name: Notifications
+description: "Clears the admin's messages from the bell in the top bar (no page of its own)"
+icon: fa://bell

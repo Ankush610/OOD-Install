@@ -78,13 +78,15 @@ def sessions():
         f = os.path.join(DIR, jid + ".json")
         conn = json.load(open(f)) if state == "RUNNING" and os.path.isfile(f) else None
         out.append(dict(id=jid, state=state, where=where, left=left, reason=reason, conn=conn))
-    # sessions the admin stopped: 8-admin writes notices/<JOB>.<jobid> owned by us; it stays until our bin button
+    # sessions the admin stopped: 8-admin writes notices/<JOB>.<jobid> owned by us ("admin <when>" + the admin's
+    # message); it stays until our bin button
     nd, running = SITE.get("notices", ""), {s["id"] for s in out}
     for name in sorted(os.listdir(nd)) if nd and os.path.isdir(nd) else []:
         f, (app, _, jid) = os.path.join(nd, name), name.partition(".")
         if app == JOB and jid not in running and os.lstat(f).st_uid == ME.pw_uid:    # anyone can drop files there
-            who, _, when = open(f).read().strip().partition(" ")
-            out.append(dict(id=jid, state="STOPPED", where=APP["title"], left="", conn=None,
+            head, _, msg = open(f).read().partition("\n")
+            who, _, when = head.strip().partition(" ")
+            out.append(dict(id=jid, state="STOPPED", where=APP["title"], left="", conn=None, msg=msg.strip(),
                             reason=f"Stopped by the {who}" + (f" on {when}" if when else "")))
     return out
 
@@ -151,6 +153,12 @@ def card(s):
                            f"In the queue: {e(why)}", "")
     elif s["state"] == "STOPPED":
         pill, hint, act = '<span class="status text-secondary-emphasis bg-secondary-subtle">Stopped</span>', e(s["reason"]), ""
+        if s["msg"]:                                   # the admin's reason: an envelope that opens it (native <dialog>)
+            act = f"""<button class="btn btn-icon text-danger" type="button" title="Message from the admin" aria-label="Message from the admin"
+  onclick="this.nextElementSibling.showModal()"><i class="bi bi-envelope-exclamation-fill"></i></button>
+<dialog class="admin-msg"><form method="dialog"><div class="fw-semibold mb-2"><i class="bi bi-envelope-paper me-2"></i>Why the admin stopped session {e(s['id'])}</div>
+  <p class="admin-msg-text">{e(s['msg'])}</p><div class="small text-body-secondary mb-3">{e(s['reason'])}</div>
+  <div class="text-end"><button class="btn btn-sm btn-primary">Close</button></div></form></dialog>"""
     else:
         pill, hint, act = f'<span class="status text-secondary-emphasis bg-secondary-subtle">{e(s["state"].title())}</span>', "", ""
     if s["state"] == "STOPPED":
@@ -182,6 +190,8 @@ def page(base):
 <link rel="stylesheet" href="{HUB}vendor/bootstrap-icons/bootstrap-icons.min.css">
 <link rel="stylesheet" href="{HUB}style.css">
 <link rel="stylesheet" href="/public/ai-factory/app-bar.css">
+<style>.admin-msg{{border:0;border-radius:.75rem;padding:1.25rem;max-width:min(32rem,92vw);background:var(--bs-body-bg);color:var(--bs-body-color);box-shadow:var(--bs-box-shadow-lg)}}
+.admin-msg::backdrop{{background:rgba(0,0,0,.4)}}.admin-msg-text{{white-space:pre-wrap;overflow-wrap:anywhere}}</style>
 <script>try{{document.documentElement.dataset.bsTheme=localStorage.getItem('mh-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}}catch(e){{}}</script>
 </head><body class="bg-body-tertiary">
 <nav class="navbar app-bar bg-body sticky-top py-2" data-bs-theme="dark"><div class="container-fluid">

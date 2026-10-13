@@ -64,3 +64,4 @@
 .draw-pad { width: 224px; height: 224px; touch-action: none; cursor: crosshair; background: #000; }
 .pixelated { image-rendering: pixelated; }
 #acc .accordion-button::after { margin-left: .75rem; }
+.admin-msg-text { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -1,0 +1,89 @@
+<%#
+  The bell in OOD's top bar, just left of Help: the admin's messages about the user's stopped sessions, jobs and
+  endpoints, each with an x, plus "Clear all". 8-admin writes them: ${ADMIN_NOTICES}/<app>.<id> =
+  "admin <when>\n<reason>", owned by the user, mode 600 (anyone can drop files in that sticky dir: only ours count).
+  Clearing = POST to the aistack_notices app (../notices), which runs as the user and removes their own files.
+
+  setup-ood.sh (step 8) installs this as views/layouts/nav/_develop_dropdown.html.erb in OOD's config views folder,
+  which OOD searches before its own: OOD 4.2 has no setting for a custom top-bar item, and Develop is the empty slot
+  right before Help.
+  ponytail: replaces OOD's Develop menu (this site has no app development: no /var/www/ood/apps/dev); if that is
+  ever turned on, override _help_dropdown instead (copy OOD's + this) so Develop comes back.
+  ${ADMIN_NOTICES} is filled in by setup-ood.sh (envsubst).
+-%>
+<%-
+  kinds = { "vscode" => "VS Code session", "jupyter" => "Jupyter session", "endpoint" => "Model Hub endpoint" }
+  notes = Dir.glob(File.join("${ADMIN_NOTICES}", "*.*")).filter_map do |f|
+    st = File.lstat(f) rescue nil
+    next unless st&.file? && st.uid == Process.uid
+    head, reason = (File.read(f, 4096) rescue "").split("\n", 2)
+    app, _, id = File.basename(f).partition(".")
+    { file: File.basename(f), mtime: st.mtime, by: head.to_s.split(" ", 2), reason: reason.to_s.strip,
+      what: kinds.fetch(app, app == "job" ? "Job" : "Job #{app}"),
+      id: app == "endpoint" ? id.split(".").last : id }          # endpoint.<user>.<name>
+  end.sort_by { |n| -n[:mtime].to_f }
+-%>
+<li class="nav-item dropdown" role="none" id="aistack-notes">
+  <a href="#" class="nav-link dropdown-toggle notes-toggle" role="menuitem" title="Notifications"
+     data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-haspopup="true" aria-expanded="false">
+    <i class="bi bi-bell<%= notes.empty? ? "" : "-fill" %>" aria-hidden="true"></i><span class="d-md-none d-xxl-inline"> Notifications</span>
+    <span class="badge rounded-pill bg-danger notes-count" <%= "hidden" if notes.empty? %>><%= notes.size %></span>
+  </a>
+  <div class="dropdown-menu dropdown-menu-end notes-menu p-0" role="menu">
+    <div class="d-flex align-items-center gap-2 px-3 py-2 border-bottom">
+      <span class="fw-semibold me-auto">Notifications</span>
+      <button type="button" class="btn btn-sm btn-outline-secondary" data-clear-notes <%= "hidden" if notes.empty? %>>
+        <i class="bi bi-trash3 me-1" aria-hidden="true"></i>Clear all</button>
+    </div>
+    <div class="notes-list">
+    <%- notes.each do |n| -%>
+      <div class="note d-flex gap-2 px-3 py-2" data-note="<%= n[:file] %>">
+        <i class="bi bi-envelope-exclamation-fill text-danger mt-1" aria-hidden="true"></i>
+        <div class="flex-grow-1 min-w-0">
+          <div class="d-flex align-items-baseline gap-2">
+            <span class="fw-semibold me-auto"><%= n[:what] %> <%= n[:id] %> stopped</span>
+            <span class="small text-body-secondary text-nowrap"><%= n[:by][1] %></span>
+          </div>
+          <div class="small text-body-secondary">by the <%= n[:by][0] %></div>
+          <div class="note-text small"><%= n[:reason].empty? ? "No reason was given." : n[:reason] %></div>
+        </div>
+        <button type="button" class="btn-close btn-sm flex-none" data-dismiss-note aria-label="Clear this notification"></button>
+      </div>
+    <%- end -%>
+    </div>
+    <div class="notes-empty text-center text-body-secondary small py-4" <%= "hidden" unless notes.empty? %>>
+      <i class="bi bi-bell-slash fs-4 d-block mb-1" aria-hidden="true"></i>No notifications</div>
+    <div class="notes-error alert alert-danger small m-2 py-1" hidden></div>
+  </div>
+</li>
+<%= javascript_tag nonce: true do -%>
+(() => {
+  const root = document.getElementById('aistack-notes');
+  if (!root) return;
+  const $ = s => root.querySelector(s);
+  const refresh = () => {
+    const n = root.querySelectorAll('[data-note]').length;
+    $('.notes-count').textContent = n; $('.notes-count').hidden = !n;
+    $('[data-clear-notes]').hidden = !n; $('.notes-empty').hidden = !!n;
+    $('.notes-toggle i').className = n ? 'bi bi-bell-fill' : 'bi bi-bell';
+  };
+  root.addEventListener('click', async ev => {
+    const b = ev.target.closest('[data-dismiss-note],[data-clear-notes]');
+    if (!b) return;
+    const items = b.hasAttribute('data-clear-notes') ? [...root.querySelectorAll('[data-note]')] : [b.closest('[data-note]')];
+    b.disabled = true; $('.notes-error').hidden = true;
+    try {
+      const r = await fetch('/pun/sys/aistack_notices/api/dismiss', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({ names: items.map(i => i.dataset.note) }) });
+      const res = await r.json().catch(() => ({ error: 'HTTP ' + r.status }));
+      if (!r.ok) throw new Error(res.error || 'HTTP ' + r.status);
+      items.filter(i => res.removed.includes(i.dataset.note)).forEach(i => i.remove());
+      refresh();
+    } catch (e) {
+      $('.notes-error').textContent = 'Could not clear it: ' + e.message; $('.notes-error').hidden = false;
+    }
+    b.disabled = false;
+  });
+})();
+<%- end -%>

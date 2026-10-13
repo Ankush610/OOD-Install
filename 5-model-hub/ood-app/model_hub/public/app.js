@@ -352,6 +352,15 @@ const whyLine = e => {
   const t = e.state === 'queued' ? (pos ? `Number ${pos} in line` : '') : (e.state === 'stopped' && !e.stopped_by) || e.state === 'ready' ? '' : cap(e.why);
   return t ? `<div class="small mt-1 ${e.state === 'failed' ? 'text-danger' : 'text-body-secondary'}">${h(t)}</div>` : '';
 };
+// the admin's message when they stopped it (8-admin stop-endpoint REASON): an envelope that opens it
+const msgBtn = e => e.stop_reason ? `<button class="btn btn-icon text-danger" data-msg="${h(e.name)}" title="Message from the admin"
+    aria-label="Message from the admin about ${h(e.name)}"><i class="bi bi-envelope-exclamation-fill"></i></button>` : '';
+function showMsg(e) {
+  $('#yaml-title').innerHTML = `<i class="bi bi-envelope-paper me-2"></i>Why the admin stopped ${h(e.name)}`;
+  $('#yaml-body').innerHTML = `<p class="admin-msg-text">${h(e.stop_reason)}</p><div class="small text-body-secondary">${h(cap(e.why))}</div>`;
+  bootstrap.Modal.getOrCreateInstance($('#yaml')).show();
+}
+const wireMsgs = list => app.querySelectorAll('[data-msg]').forEach(b => b.onclick = () => showMsg(list.find(e => e.name === b.dataset.msg)));
 async function renderEndpoints() {
   if (!$('#eps')) app.innerHTML = header('My endpoints', 'Models you put online. This page updates by itself.',
       `<a class="btn btn-primary" href="#/"><i class="bi bi-plus-lg me-1"></i>Deploy a model</a>`) + `<div id="eps">${spinner()}</div>`;
@@ -366,12 +375,13 @@ async function renderEndpoints() {
           <div class="meta"><span>${modelLabel(e.model)}</span>${hwLabel(e.gpu)}${e.state === 'stopped' ? '' : timeLeft(e.expires)}</div>
           ${whyLine(e)}</div>
         <div class="d-flex align-items-center gap-1 position-relative z-2">
-          ${e.state === 'stopped' ? `<a class="btn btn-sm btn-outline-primary text-nowrap" href="${modelHref(e.model)}">Deploy again</a>` : ''}
+          ${msgBtn(e)}${e.state === 'stopped' ? `<a class="btn btn-sm btn-outline-primary text-nowrap" href="${modelHref(e.model)}">Deploy again</a>` : ''}
           <button class="btn btn-icon" data-del="${h(e.name)}" title="Delete" aria-label="Delete ${h(e.name)}"><i class="bi bi-trash"></i></button></div>
         <i class="bi bi-chevron-right text-body-secondary d-none d-md-inline"></i>
       </div></div>`).join('')}</div></div>`
     : `<div class="card">${empty('hdd-network', 'Nothing online yet', 'Pick a model and deploy it. It shows up here.<div class="mt-3"><a class="btn btn-primary" href="#/">Browse models</a></div>')}</div>`;
   app.querySelectorAll('[data-del]').forEach(b => b.onclick = () => del(b.dataset.del));
+  wireMsgs(list);
   renderShared();
   timer = setTimeout(renderEndpoints, 5000);
 }
@@ -470,7 +480,7 @@ function stateBanner(ep) {
   if (ep.state === 'failed') return box('danger', 'exclamation-octagon', 'It couldn\'t start', `${h(ep.why)}. The <b>Logs</b> tab shows what went wrong.`);
   if (ep.state === 'stopped') return box('secondary', 'stop-circle', 'This endpoint has stopped',
     `${ep.stopped_by ? `${h(cap(ep.why))}.` : 'Its time ran out, or it was stopped.'} Deploy the model again to use it.`,
-    `<a class="btn btn-sm btn-primary text-nowrap" href="${modelHref(ep.model)}">Deploy again</a>`);
+    `<div class="d-flex align-items-center gap-1">${msgBtn(ep)}<a class="btn btn-sm btn-primary text-nowrap" href="${modelHref(ep.model)}">Deploy again</a></div>`);
   return '';
 }
 async function renderEndpoint(name, tab = 'play') {
@@ -494,6 +504,7 @@ async function renderEndpoint(name, tab = 'play') {
     <div id="tab"></div>`;
   $('#del').onclick = () => del(name);
   $('#shr').onclick = () => shareDialog(ep);
+  wireMsgs([ep]);
   app.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { clearTimeout(timer); renderEndpoint(name, b.dataset.tab); });
   if (tab === 'play') playground(ep, info);
   if (tab === 'api') apiTab(ep, info);

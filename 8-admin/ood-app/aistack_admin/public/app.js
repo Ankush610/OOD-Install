@@ -3,7 +3,7 @@
 //   GET  api/me | api/jobs | api/endpoints | api/users | api/teams | api/log
 //   POST api/users {name,password} | api/users/<u>/remove {delete_home,delete_mlflow} | api/users/<u>/password {password}
 //        api/users/<u>/limits {gpus,max_hours}|{reset} | api/teams {name} | api/teams/<t>/members {add,remove}
-//        api/endpoints/<owner>/<name>/stop | api/jobs/<id>/cancel          DELETE api/teams/<t>
+//        api/endpoints/<owner>/<name>/stop {reason} | api/jobs/<id>/cancel {reason}  DELETE api/teams/<t>
 // Routes: #/ (running)  #/users  #/teams  #/log
 'use strict';
 const $ = s => document.querySelector(s);
@@ -77,7 +77,7 @@ function dialog({ title, body, ok, okClass = 'btn-primary', run, check = () => '
   };
   delete btn.dataset.done;
   dlg.show();
-  setTimeout(() => form.querySelector('input:not([type=checkbox]),select')?.focus(), 300);
+  setTimeout(() => form.querySelector('input:not([type=checkbox]),select,textarea')?.focus(), 300);
 }
 const field = (name, label, attrs = '', help = '') => `<div class="mb-3"><label class="form-label" for="f-${name}">${label}</label>
     <input class="form-control" id="f-${name}" name="${name}" ${attrs}>${help ? `<div class="form-text">${help}</div>` : ''}</div>`;
@@ -87,6 +87,11 @@ const passwordField = () => `<div class="mb-3"><label class="form-label" for="f-
     <i class="bi bi-shuffle me-1"></i>Generate</button></div>
     <div class="form-text">8+ characters. Give it to them; at their first web login they must choose their own.</div></div>`;
 const pwCheck = f => (f.password || '').length < 8 ? 'The password needs 8 or more characters.' : '';
+// the message the owner of a stopped session/job/endpoint gets (helper: cancel-job / stop-endpoint REASON; same 1000-character limit)
+const reasonField = who => `<div class="mt-3"><label class="form-label" for="f-reason">Message to ${who}: why is it stopped?</label>
+    <textarea class="form-control" id="f-reason" name="reason" rows="3" maxlength="1000" required></textarea>
+    <div class="form-text">They get it under the bell in the portal's top bar (and in VS Code / Jupyter / Model Hub).</div></div>`;
+const reasonCheck = f => (f.reason || '').trim() ? '' : 'Write why you stop it: the user gets this message.';
 
 // ---------- Running: everything in Slurm (sessions, training jobs, endpoints), on which GPU, since when ----------
 const KIND = { endpoint: ['hdd-network', 'primary', 'Endpoint'], session: ['window', 'info', 'Session'], job: ['cpu', 'secondary', 'Job'] };
@@ -140,16 +145,20 @@ async function viewRunning(first) {
     const r = byId[b.dataset.stop], who = `<b>${h(r.owner)}</b>`;
     if (r.kind === 'endpoint') dialog({ title: `Stop ${r.name}?`, ok: '<i class="bi bi-stop-circle me-1"></i>Stop it', okClass: 'btn-danger',
       body: `<p>${who}'s endpoint <b>${h(r.name)}</b> stops now${r.gpus.length ? ' and its GPU is free for others' : ''}.</p>
-        <p class="mb-0 text-body-secondary">${h(r.owner)} sees it as stopped in Model Hub and can deploy it again. Nothing is deleted.</p>`,
-      run: () => api(`endpoints/${enc(r.owner)}/${enc(r.name)}/stop`, { method: 'POST' }) });
+        <p class="mb-0 text-body-secondary">${h(r.owner)} sees it as stopped in Model Hub and can deploy it again. Nothing is deleted.</p>`
+        + reasonField(who),
+      check: reasonCheck,
+      run: f => api(`endpoints/${enc(r.owner)}/${enc(r.name)}/stop`, { method: 'POST', body: { reason: f.reason.trim() } }) });
     else dialog({ title: r.kind === 'session' ? `Stop ${r.owner}'s ${r.app} session?` : `Cancel job ${r.id}?`,
       ok: '<i class="bi bi-stop-circle me-1"></i>Stop it', okClass: 'btn-danger',
-      body: r.kind === 'session'
+      body: (r.kind === 'session'
         ? `<p>${who}'s ${h(r.app)} session (job ${r.id}${r.node ? ` on ${h(r.node)}` : ''}) ends now${r.gpus.length ? ' and its GPU is free for others' : ''}.</p>
            <p class="mb-0 text-body-secondary">Anything not saved in it is lost. Their files stay; they can start a new session.</p>`
         : `<p>${who}'s job <b>${h(r.name)}</b> (${r.id}) ends now${r.gpus.length ? ` and frees ${r.gpus.length} GPU${r.gpus.length > 1 ? 's' : ''}` : ''}.</p>
-           <p class="mb-0 text-body-secondary">Slurm doesn't run it again. Whatever it wrote so far stays in their files.</p>`,
-      run: () => api(`jobs/${r.id}/cancel`, { method: 'POST' }) });
+           <p class="mb-0 text-body-secondary">Slurm doesn't run it again. Whatever it wrote so far stays in their files.</p>`)
+        + reasonField(who),
+      check: reasonCheck,
+      run: f => api(`jobs/${r.id}/cancel`, { method: 'POST', body: { reason: f.reason.trim() } }) });
   });
   const f = $('#filter'); if (f && !f.oninput) f.oninput = () => viewRunning(false);
   const kd = $('#kind'); if (kd && !kd.onchange) kd.onchange = () => viewRunning(false);
