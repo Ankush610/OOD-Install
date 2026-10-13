@@ -29,7 +29,7 @@ This cluster: laptop → `network-node` (10.208.34.138) → `master` (192.168.40
 4-vscode/1-install-code-server.sh  release tarball -> CODE_SERVER_ROOT/<ver>, current symlink (shared /home)
 4-vscode/2-slurm-viewer.sh  viewer partition on master, OverSubscribe=FORCE:n, slurm.conf to every node
 4-vscode/3-install-ood-app.sh  envsubst ood-app/vscode -> /var/www/ood/apps/sys/vscode (Batch Connect)
-5-model-hub/1..7-*.sh         Model Hub: setup, users, images, tests, OOD app (v1 = git tag v1; v2 is built here)
+5-model-hub/1..7-*.sh         Model Hub: setup, users, images, tests, OOD app (v1 = git tag v1; v2 done; v3 is built here)
 6-keycloak/1-install.sh     Keycloak + Postgres as podman quadlets on master (127.0.0.1), image built + pushed, permanent admin
 6-keycloak/2-realm.sh       realm CLUSTER_ID: LDAP users + groups, writable for passwords only (LDAP account cn=keycloak-passwords + access rule; ldaps); kc.py = admin REST; Apache /auth proxy is in 2-ood
 7-jupyter/1-install-jupyter.sh  standalone Python + venv + requirements.txt -> JUPYTER_ROOT/<lab>-py<py>, current symlink
