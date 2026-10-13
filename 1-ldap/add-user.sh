@@ -12,13 +12,16 @@ source "$HERE/../site.conf"
 U=${1:?usage: sudo bash add-user.sh <username>}
 [[ "$U" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || { echo "Bad username: $U" >&2; exit 1; }
 getent passwd "$U" >/dev/null && { echo "$U already exists." >&2; exit 1; }
+# a removed person's kept home (remove-user.sh): step 4 would hand it, files and all, to the new person
+[ ! -e "/home/$U" ] || { echo "/home/$U exists (a removed user's kept home?). Move or delete it first." >&2; exit 1; }
 L=(-x -H ldap://localhost -D "$LDAP_DM" -y "$LDAP_DM_PASS_FILE")
 
-echo "== 1. Next free UID (above every local and LDAP one)"
+echo "== 1. Next free UID (above every local and LDAP one, and every one ever handed out)"
 # ponytail: max+1, not safe if two admins add users at the same second; fine for one admin
 used=$( { awk -F: '{print $3}' /etc/passwd /etc/group
           ldapsearch -x -LLL -H ldap://localhost -b "$LDAP_BASE" '(|(uidNumber=*)(gidNumber=*))' uidNumber gidNumber |
-            awk '/^(uid|gid)Number:/{print $2}'; } | awk -v lo="$MIN_UID" -v hi="$MAX_UID" '$1>=lo && $1<=hi' | sort -n | tail -1)
+            awk '/^(uid|gid)Number:/{print $2}'
+          cat "$LDAP_LAST_UID_FILE" 2>/dev/null || true; } | awk -v lo="$MIN_UID" -v hi="$MAX_UID" '$1>=lo && $1<=hi' | sort -n | tail -1)
 ID=$(( ${used:-$((MIN_UID - 1))} + 1 ))
 echo "$U -> uid/gid $ID"
 
@@ -43,6 +46,7 @@ gidNumber: $ID
 homeDirectory: /home/$U
 loginShell: /bin/bash
 EOF
+(umask 077; echo "$ID" > "$LDAP_LAST_UID_FILE")    # never handed out again, even after remove-user.sh
 
 echo "== 3. Password (typed, never on the command line)"
 # 389 DS refuses password changes on a plain connection (error 13 "Confidentiality required"): ldaps

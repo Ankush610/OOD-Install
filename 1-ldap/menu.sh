@@ -27,7 +27,8 @@ show() { whiptail --title "$T" --scrolltext --msgbox "$1" 22 80; }
 sure() { whiptail --title "$T" --defaultno --yesno "$1" 14 76; }
 run() {  # a script in the plain terminal (it prints, may ask for a password), then back to the menu
   clear; echo "== $*"; echo
-  if "$@"; then echo; echo "OK."; else echo; echo "FAILED (exit $?)."; fi
+  local rc=0; "$@" || rc=$?
+  if [ $rc = 0 ]; then echo; echo "OK."; else echo; echo "FAILED (exit $rc)."; fi
   read -rp "Press Enter to go back to the menu " _
 }
 
@@ -69,6 +70,14 @@ add_person() {
   sure "Add $u to the cluster?\n\nNext free UID, own group, home /home/$u, MLflow job token, Model Hub namespace.\nYou type the password in the terminal next." || return 0
   run bash "$HERE/add-user.sh" "$u"
 }
+remove_person() {
+  local u o=() h=keep m=keep
+  u=$(pick_user "Remove which person?") || return 0
+  sure "Also DELETE /home/$u (their files and ~/models)?\n\nNo = keep it (nobody else will get their UID)." && { o+=(--delete-home); h=DELETE; }
+  sure "Also DELETE their MLflow experiments, runs and models?\n\nNo = keep them (private, tag removed_owner=$u)." && { o+=(--delete-mlflow); m=DELETE; }
+  sure "Remove $u now?\n\nStops their jobs, sessions and endpoints; deletes their API key, Model Hub namespace,\nMLflow + Keycloak login, teams and LDAP user.\n\nHome: $h · MLflow work: $m" || return 0
+  run bash "$HERE/remove-user.sh" "$u" "${o[@]}" --yes
+}
 set_pw() {
   local u p1 p2 out
   u=$(pick_user "Set a new password for:") || return 0
@@ -96,10 +105,10 @@ test_pw() {
 }
 people_menu() {
   local c
-  while c=$(ask --cancel-button Back --menu "People" 14 60 4 \
-              list "List people (UID, home, teams)" add "Add a person" \
+  while c=$(ask --cancel-button Back --menu "People" 15 60 5 \
+              list "List people (UID, home, teams)" add "Add a person" remove "Remove a person" \
               password "Set a new password" test "Test a password"); do
-    case $c in list) list_people ;; add) add_person ;; password) set_pw ;; test) test_pw ;; esac
+    case $c in list) list_people ;; add) add_person ;; remove) remove_person ;; password) set_pw ;; test) test_pw ;; esac
   done
 }
 

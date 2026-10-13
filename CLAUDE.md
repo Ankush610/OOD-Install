@@ -17,7 +17,8 @@ This cluster: laptop → `network-node` (10.208.34.138) → `master` (192.168.40
 1-ldap/1-server.sh          master: 389 DS, tree, ACIs, CA -> LDAP_CA (shared /home)
 1-ldap/import-local-users.sh  optional: local users -> LDAP, same UID + password hash
 1-ldap/2-client.sh          every node: UID clash check, SSSD, authselect
-1-ldap/add-user.sh          new person (replaces useradd), subuid/subgid on LOGIN_NODES, also runs 3-mlflow/3-sync-tokens.sh
+1-ldap/add-user.sh          new person (replaces useradd), subuid/subgid on LOGIN_NODES, also runs 3-mlflow/3-sync-tokens.sh; never reuses a UID (LDAP_LAST_UID_FILE)
+1-ldap/remove-user.sh       someone leaves: jobs/sessions/endpoints stopped, namespace, MLflow + Keycloak login, teams, LDAP entries; home + MLflow work only with flags
 1-ldap/group.sh             teams (groupOfNames, not Linux groups) for Model Hub sharing; re-syncs members via 5-model-hub/2-sync-users.sh
 2-ood/setup-ood.sh          OOD, AuthBasicProvider "ldap file", self-signed cert, Slurm cluster file
 3-mlflow/1-build-image.sh   image/ -> MLFLOW_IMAGE (no root)

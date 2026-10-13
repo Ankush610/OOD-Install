@@ -12,6 +12,8 @@ KEYCLOAK_ADMIN, KEYCLOAK_DATA (admin.pass lives there). Passwords are read from 
   kc.py local-user NAME
                 a realm user that is NOT in LDAP (the local admin's way in when LDAP is down);
                 password from stdin; does nothing if the user already exists
+  kc.py remove-user NAME
+                end all of NAME's sessions and delete Keycloak's copy (1-ldap/remove-user.sh, before the LDAP delete)
 """
 import json
 import os
@@ -202,8 +204,22 @@ def cmd_local_user(name):
     print(f"user {name}: created (local to Keycloak, not in LDAP)")
 
 
+def cmd_remove_user(name):
+    a, realm = login(), os.environ["KEYCLOAK_REALM"]
+    found = a.get(f"/realms/{realm}/users?exact=true&username={urllib.parse.quote(name)}")
+    if not found:
+        print(f"user {name}: not in Keycloak (never logged in)")
+        return
+    uid = found[0]["id"]
+    a.call("POST", f"/realms/{realm}/users/{uid}/logout")         # every session of theirs ends now
+    # read-only LDAP: Keycloak only drops its own copy; it would re-import the person while LDAP still has them
+    a.call("DELETE", f"/realms/{realm}/users/{uid}")
+    print(f"user {name}: signed out and deleted from Keycloak")
+
+
 if __name__ == "__main__":
-    cmds = {"admin": (cmd_admin, 0), "realm": (cmd_realm, 0), "client": (cmd_client, 3), "local-user": (cmd_local_user, 1)}
+    cmds = {"admin": (cmd_admin, 0), "realm": (cmd_realm, 0), "client": (cmd_client, 3), "local-user": (cmd_local_user, 1),
+            "remove-user": (cmd_remove_user, 1)}
     name, args = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ("", [])
     if name not in cmds or len(args) != cmds[name][1]:
         sys.exit(__doc__)
