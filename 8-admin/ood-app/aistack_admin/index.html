@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en" data-bs-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin</title>
+  <link rel="stylesheet" href="vendor/bootstrap/bootstrap.min.css">
+  <link rel="stylesheet" href="vendor/bootstrap-icons/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="admin.css">
+  <link rel="stylesheet" href="/public/ai-factory/app-bar.css">
+</head>
+<body class="bg-body-tertiary">
+  <nav class="navbar navbar-expand-md app-bar bg-body sticky-top py-2" data-bs-theme="dark">
+    <div class="container-fluid">
+      <div class="d-flex align-items-center gap-2">
+        <a class="portal-logo" href="/pun/sys/dashboard" title="Back to the portal"><img src="/public/ai-factory/cdac-logo.svg" alt="Portal home"></a>
+        <a class="navbar-brand d-flex align-items-center gap-2 fw-semibold" href="#/">
+          <span class="brand-mark"><i class="bi bi-shield-lock"></i></span>Admin
+        </a>
+      </div>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-controls="nav"
+              aria-expanded="false" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>
+      <div class="collapse navbar-collapse" id="nav">
+        <ul class="navbar-nav me-auto gap-md-1 ms-md-3">
+          <li class="nav-item"><a class="nav-link" data-nav="running" href="#/"><i class="bi bi-gpu-card me-1"></i>Running</a></li>
+          <li class="nav-item"><a class="nav-link" data-nav="users" href="#/users"><i class="bi bi-people me-1"></i>Users</a></li>
+          <li class="nav-item"><a class="nav-link" data-nav="teams" href="#/teams"><i class="bi bi-diagram-3 me-1"></i>Teams</a></li>
+          <li class="nav-item"><a class="nav-link" data-nav="log" href="#/log"><i class="bi bi-journal-text me-1"></i>Log</a></li>
+        </ul>
+        <div class="d-flex align-items-center gap-2">
+          <span class="logged-in" id="who"></span>
+          <button class="btn btn-sm btn-icon" id="theme" type="button" aria-label="Toggle dark mode"><i class="bi bi-moon-stars"></i></button>
+        </div>
+      </div>
+    </div>
+  </nav>
+  <main class="container-xl py-4" id="app"></main>
+
+  <div class="toast-container position-fixed bottom-0 end-0 p-3">
+    <div class="toast align-items-center border-0 text-bg-dark" id="toast" role="status" aria-live="polite" aria-atomic="true">
+      <div class="d-flex"><div class="toast-body" id="toast-body"></div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button></div>
+    </div>
+  </div>
+
+  <!-- one dialog for every form and confirmation; app.js fills title, body and the button -->
+  <div class="modal fade" id="dlg" tabindex="-1" aria-labelledby="dlg-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered"><form class="modal-content" id="dlg-form" novalidate>
+      <div class="modal-header"><h1 class="modal-title fs-5" id="dlg-title"></h1>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+      <div class="modal-body" id="dlg-body"></div>
+      <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" id="dlg-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="dlg-ok"></button></div>
+    </form></div>
+  </div>
+
+  <script src="vendor/bootstrap/bootstrap.bundle.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

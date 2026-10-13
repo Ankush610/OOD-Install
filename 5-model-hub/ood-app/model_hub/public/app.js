@@ -349,7 +349,7 @@ const isShared = s => s && (s.all || s.users.length || s.teams.length);
 // the list's second line: only what the status pill doesn't already say
 const whyLine = e => {
   const pos = /number (\d+)/.exec(e.why || '')?.[1];
-  const t = e.state === 'queued' ? (pos ? `Number ${pos} in line` : '') : e.state === 'stopped' || e.state === 'ready' ? '' : cap(e.why);
+  const t = e.state === 'queued' ? (pos ? `Number ${pos} in line` : '') : (e.state === 'stopped' && !e.stopped_by) || e.state === 'ready' ? '' : cap(e.why);
   return t ? `<div class="small mt-1 ${e.state === 'failed' ? 'text-danger' : 'text-body-secondary'}">${h(t)}</div>` : '';
 };
 async function renderEndpoints() {
@@ -468,7 +468,8 @@ function stateBanner(ep) {
     `${pos ? `You're number ${pos} in line. ` : ''}It starts by itself, so you can leave this page.`);
   if (ep.state === 'loading' || ep.state === 'starting') return box('info', 'arrow-repeat', 'Starting up', `${h(cap(ep.why || 'loading the model'))}. Big models can take a few minutes.`);
   if (ep.state === 'failed') return box('danger', 'exclamation-octagon', 'It couldn\'t start', `${h(ep.why)}. The <b>Logs</b> tab shows what went wrong.`);
-  if (ep.state === 'stopped') return box('secondary', 'stop-circle', 'This endpoint has stopped', 'Its time ran out, or it was stopped. Deploy the model again to use it.',
+  if (ep.state === 'stopped') return box('secondary', 'stop-circle', 'This endpoint has stopped',
+    `${ep.stopped_by ? `${h(cap(ep.why))}.` : 'Its time ran out, or it was stopped.'} Deploy the model again to use it.`,
     `<a class="btn btn-sm btn-primary text-nowrap" href="${modelHref(ep.model)}">Deploy again</a>`);
   return '';
 }

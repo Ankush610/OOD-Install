@@ -37,9 +37,9 @@ export CODE_SERVER_ROOT VSCODE_IDLE_SECONDS
 envsubst '$CODE_SERVER_ROOT $VSCODE_IDLE_SECONDS' < "$HERE/ood-app/vscode/job.sh" > "$APP/job.sh"
 python3 -c 'import json,sys; a=sys.argv; json.dump({"app": "vscode", "slurm_bin": a[2], "slurm_conf": a[11], "viewer_partition": a[3], "mem": a[4],
   "idle_seconds": int(a[5]), "gpu_partition": a[6], "gpu_type": a[7], "gpu_max": int(a[8]) if a[6] else 0,
-  "cpus_per_gpu": int(a[9]), "mem_per_gpu_mb": int(a[10])}, open(a[1], "w"), indent=1)' \
+  "cpus_per_gpu": int(a[9]), "mem_per_gpu_mb": int(a[10]), "notices": a[12]}, open(a[1], "w"), indent=1)' \
   "$APP/site.json" "$SLURM_BIN" "$VIEWER_PARTITION" "$VSCODE_MEM" "$VSCODE_IDLE_SECONDS" \
-  "$GPU_PARTITION" "$GPU_TYPE" "$GPU_MAX" "$CPUS_PER_GPU" "$MEM_PER_GPU_MB" "$SLURM_CONF"
+  "$GPU_PARTITION" "$GPU_TYPE" "$GPU_MAX" "$CPUS_PER_GPU" "$MEM_PER_GPU_MB" "$SLURM_CONF" "$ADMIN_NOTICES"
 chmod -R a+rX "$APP"
 chmod a+rx "$APP/job.sh"                        # sbatch runs it as the user
 touch "$APP/passenger_wsgi.py"                  # reload it in running web servers

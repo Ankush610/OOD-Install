@@ -446,6 +446,7 @@ def deploy(body):
     if kubectl("get", "pod", ep, "--ignore-not-found", "-o", "name").strip():
         raise Fail(409, f"{ep} is still running: delete it first, or pick another endpoint name")
     kubectl("apply", "-f", "-", stdin=json.dumps(manifest))
+    kubectl("annotate", "svc", ep, "model-hub/stopped-by-", check=False)   # an old admin stop is no longer news
     return {"endpoint": ep}
 
 
@@ -497,10 +498,14 @@ def endpoints():
         name, ann = s["metadata"]["name"], s["metadata"].get("annotations", {})
         pod = pods.get(name)
         state, why = pod_state(pod, queue)
+        by = ann.get("model-hub/stopped-by") if not pod else None       # "admin 2026-10-13 14:05" (8-admin)
+        if by:
+            who, _, when = by.partition(" ")
+            why = f"stopped by the {who}" + (f" on {when}" if when else "")
         rt = s["metadata"]["labels"].get("model-hub/runtime")
         ctr = pod["spec"]["containers"][0] if pod else {}
         out.append({"name": name, "runtime": rt, "model": ann.get("model-hub/model"), "expires": ann.get("model-hub/expires"),
-                    "state": state, "why": why, "image": ctr.get("image"), "gpu": gpu_of(pod) if pod else 0,
+                    "state": state, "why": why, "stopped_by": bool(by), "image": ctr.get("image"), "gpu": gpu_of(pod) if pod else 0,
                     "node": pod["spec"].get("nodeName") if pod else None, "ip": s["spec"].get("clusterIP"),
                     "share": share_of(ann),
                     "path": "/v1/chat/completions" if rt == "vllm" else "/invocations"})

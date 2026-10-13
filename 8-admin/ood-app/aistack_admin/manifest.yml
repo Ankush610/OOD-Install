@@ -1,0 +1,6 @@
+---
+name: Admin
+category: Interactive Apps
+subcategory: Servers
+description: "Cluster admin (only the local admin account sees it): who runs what on which GPU, users, teams, limits"
+icon: fa://user-shield

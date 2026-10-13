@@ -6,6 +6,9 @@ things, checks every argument, and calls the same scripts the admin runs by hand
   read      users                         LDAP people + teams + Model Hub limits
             teams                         teams and their members
             endpoints                     every Model Hub endpoint: owner, state, GPU (node/device), since, until
+            log                           the last 200 lines of ADMIN_LOG (newest first)
+            jobs                          everything running in Slurm: VS Code / Jupyter sessions, training jobs,
+                                          Model Hub endpoints (linked to owner + endpoint), with node + GPU
   people    add-user NAME                 password: one line on stdin (one-time)     1-ldap/add-user.sh
             remove-user NAME [--delete-home] [--delete-mlflow]                       1-ldap/remove-user.sh
             set-password NAME             password: one line on stdin (one-time)     1-ldap/set-password.sh
@@ -13,6 +16,7 @@ things, checks every argument, and calls the same scripts the admin runs by hand
             team-add TEAM USER... | team-remove TEAM USER...
   limits    limits USER --gpus N | --max-hours H | --reset                           5-model-hub/2-sync-users.sh
   models    stop-endpoint USER NAME       stops the pod (= its Slurm job, frees the GPU); the endpoint stays, "stopped"
+  jobs      cancel-job JOBID              scancel one Slurm job (a session or a training job; endpoints: stop-endpoint)
 
 Answer: one JSON object on stdout, {"ok": true|false, "output": "<what the script printed>", "data": ...}.
 Every change goes to ADMIN_LOG (who, what, result; never a password). One change at a time (a lock).
@@ -21,6 +25,7 @@ Every change goes to ADMIN_LOG (who, what, result; never a password). One change
 import fcntl
 import json
 import os
+import pwd
 import re
 import subprocess
 import sys
@@ -79,7 +84,11 @@ def plan(action, args, S):
         return ["bash", s("5-model-hub/2-sync-users.sh"), u, *opt], False, True
     if action == "stop-endpoint" and len(args) == 2:
         return ["stop-endpoint", need(NAME, args[0], "user"), need(ENDPOINT, args[1], "endpoint")], False, True
-    if action in ("users", "teams", "endpoints") and not args:
+    if action == "cancel-job" and len(args) == 1:
+        if not re.fullmatch(r"[0-9]{1,10}", args[0]):
+            raise Bad(f"bad job id: {args[0]!r}")
+        return ["cancel-job", args[0]], False, True
+    if action in ("users", "teams", "endpoints", "log", "jobs") and not args:
         return [action], False, False
     raise Bad(f"unknown action or wrong arguments: {action} {args}")
 
@@ -139,7 +148,8 @@ def endpoints_from(svcs, pods, claims):
                     "runtime": s["metadata"].get("labels", {}).get("model-hub/runtime"), "model": ann.get("model-hub/model"),
                     "node": (p or {}).get("spec", {}).get("nodeName"), "gpus": sorted(gpus.get((ns, name), [])),
                     "since": st.get("startTime"), "until": ann.get("model-hub/expires"),
-                    "stopped_by": ann.get("model-hub/stopped-by") if state == "stopped" else None})
+                    "stopped_by": ann.get("model-hub/stopped-by") if state == "stopped" else None,
+                    "job": (p or {}).get("metadata", {}).get("annotations", {}).get("slurmjob.slinky.slurm.net/job-name")})
     return sorted(out, key=lambda e: (e["owner"], e["name"]))
 
 
@@ -148,11 +158,98 @@ def endpoints():
     return endpoints_from(get("svc", "-l", "model-hub/runtime"), get("pods", "-l", "model-hub/runtime"), get("resourceclaims"))
 
 
+def read_log(S):
+    try:
+        lines = open(S.get("ADMIN_LOG", "/var/log/aistack-admin.log")).read().splitlines()[-200:]
+    except FileNotFoundError:
+        return []
+    return [json.loads(l) for l in reversed(lines) if l.strip()]
+
+
+APP = re.compile(r"^/var/www/ood/apps/(?:sys|dev/[^/]+/gateway|usr/[^/]+/gateway)/([^/]+)/")
+APP_NAMES = {"vscode": "VS Code", "jupyter": "Jupyter", "bc_desktop": "Desktop"}
+
+
+def jobs_from(squeue, eps, bridge, hostnames=lambda nodes: [nodes]):
+    """Rows for the Running tab: every Slurm job, what it is, whose, where, which GPUs.
+    squeue = `squeue -a --json`; eps = endpoint rows (their "job" = the Slurm job name slurm-bridge gave the pod)."""
+    by_job = {e["job"]: e for e in eps if e.get("job")}
+    t = lambda v: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(v["number"])) if v and v.get("set") and v.get("number") else None
+    out = []
+    for j in squeue.get("jobs", []):
+        state = (j.get("job_state") or ["?"])[0].lower()
+        nodes = j.get("nodes") or ""
+        gpus = []                                      # gres_detail: one entry per node, e.g. "gpu:a30:2(IDX:0-1)"
+        for n, g in zip(hostnames(nodes) if nodes else [], j.get("gres_detail") or []):
+            m = re.search(r"\(IDX:([0-9,-]+)\)", g)
+            for part in (m.group(1).split(",") if m else []):
+                a, _, b = part.partition("-")
+                gpus += [f"{n}/gpu-{i}" for i in range(int(a), int(b or a) + 1)]
+        row = {"id": j["job_id"], "owner": j.get("user_name"), "name": j.get("name"), "state": state,
+               "partition": j.get("partition"), "node": nodes or None, "gpus": gpus,
+               "since": t(j.get("start_time")) if state == "running" else None, "until": t(j.get("end_time")),
+               "why": j.get("state_reason") if state == "pending" and j.get("state_reason") not in (None, "None") else None}
+        app = APP.match(j.get("command") or "")
+        if j.get("partition") == bridge or j.get("name") in by_job:
+            e = by_job.get(j.get("name"), {})
+            row.update(kind="endpoint", owner=e.get("owner", row["owner"]), name=e.get("name", row["name"]), model=e.get("model"))
+        elif app:
+            row.update(kind="session", app=APP_NAMES.get(app.group(1), app.group(1)))
+        else:
+            row.update(kind="job")
+        out.append(row)
+    return sorted(out, key=lambda r: (r["state"] != "running", r["owner"] or "", r["id"]))
+
+
+def jobs(S):
+    slurm = {**os.environ, "SLURM_CONF": S["SLURM_CONF"]}   # sudo drops it; Slurm here has no built-in config path
+    sq = json.loads(subprocess.run([os.path.join(S["SLURM_BIN"], "squeue"), "-a", "--json"], capture_output=True,
+                                   text=True, check=True, env=slurm).stdout)
+    try:
+        eps = endpoints()
+    except subprocess.CalledProcessError:              # no Model Hub (or k8s down): the jobs are still worth seeing
+        eps = []
+    hn = lambda nodes: subprocess.run([os.path.join(S["SLURM_BIN"], "scontrol"), "show", "hostnames", nodes],
+                                      capture_output=True, text=True, check=True, env=slurm).stdout.split()
+    return jobs_from(sq, eps, S.get("BRIDGE_PARTITION", "slurm-bridge"), hn)
+
+
+def cancel_job(S, jobid):
+    slurm = {**os.environ, "SLURM_CONF": S["SLURM_CONF"]}
+    sq = json.loads(subprocess.run([os.path.join(S["SLURM_BIN"], "squeue"), "-j", jobid, "--json"], capture_output=True,
+                                   text=True, env=slurm).stdout or "{}").get("jobs", [])
+    if not sq:
+        raise Bad(f"no job {jobid} (finished already?)")
+    if sq[0].get("partition") == S.get("BRIDGE_PARTITION", "slurm-bridge"):
+        raise Bad(f"job {jobid} is a Model Hub endpoint: use stop-endpoint (keeps it listed, the owner can redeploy)")
+    subprocess.run([os.path.join(S["SLURM_BIN"], "scancel"), jobid], capture_output=True, text=True, check=True, env=slurm)
+    # the VS Code / Jupyter page reads this to say "stopped by the admin" instead of the session just vanishing.
+    # <jobname>.<jobid>, owned by the job's user in a sticky dir (like /tmp): only they can remove it (its bin button)
+    # ponytail: notices of removed users stay (tiny files); clean them in remove-user.sh if it ever matters
+    d = S["ADMIN_NOTICES"]
+    os.makedirs(d, exist_ok=True)
+    os.chmod(d, 0o1777)
+    app = sq[0].get("name") if re.fullmatch(r"[a-z_]{1,32}", sq[0].get("name") or "") else "job"   # user-chosen: no paths
+    f = os.path.join(d, f"{app}.{jobid}")
+    if os.path.lexists(f):
+        os.unlink(f)
+    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)   # never through a planted symlink
+    os.fchown(fd, pwd.getpwnam(sq[0]["user_name"]).pw_uid, -1)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(f"admin {stamp()}\n")
+    return f"cancelled job {jobid} ({sq[0].get('name')}, {sq[0].get('user_name')})"
+
+
+def stamp():
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime())
+
+
 def stop_endpoint(user, name):
     ns = f"u-{user}"
-    kubectl("-n", ns, "get", "svc", name, "-l", "model-hub/runtime")     # only Model Hub endpoints (fails if none)
-    kubectl("-n", ns, "annotate", "svc", name, "--overwrite",
-            f"model-hub/stopped-by=admin {time.strftime('%Y-%m-%d %H:%M', time.localtime())}")
+    svc = json.loads(kubectl("-n", ns, "get", "svc", name, "-o", "json"))     # fails if none (kubectl: no name + -l)
+    if "model-hub/runtime" not in svc["metadata"].get("labels", {}):
+        raise Bad(f"{name} is not a Model Hub endpoint")
+    kubectl("-n", ns, "annotate", "svc", name, "--overwrite", f"model-hub/stopped-by=admin {stamp()}")
     # the Service stays: Model Hub shows it "stopped" and the owner can deploy it again
     return kubectl("-n", ns, "delete", "pod", name, "--ignore-not-found", "--wait=false").strip() or f"{name}: was not running"
 
@@ -184,7 +281,7 @@ def main(argv):
         return {"ok": False, "output": str(e)}
     if not change:
         try:
-            data = {"users": users, "teams": teams, "endpoints": lambda S: endpoints()}[action](S)
+            data = {"users": users, "teams": teams, "endpoints": lambda S: endpoints(), "log": read_log, "jobs": jobs}[action](S)
         except subprocess.CalledProcessError as e:
             return {"ok": False, "output": f"{' '.join(e.cmd[:3])}...: {(e.stderr or '').strip()[-300:]}"}
         return {"ok": True, "output": "", "data": data}
@@ -194,6 +291,8 @@ def main(argv):
         try:
             if cmd[0] == "stop-endpoint":
                 out, ok = stop_endpoint(cmd[1], cmd[2]), True
+            elif cmd[0] == "cancel-job":
+                out, ok = cancel_job(S, cmd[1]), True
             else:
                 r = subprocess.run(cmd, input=(pw + "\n") if wants_pw else "", stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True,      # one stream: warnings where they happened
@@ -201,6 +300,8 @@ def main(argv):
                 out, ok = r.stdout, r.returncode == 0
         except subprocess.CalledProcessError as e:
             out, ok = (e.stdout or "") + (e.stderr or ""), False
+        except Bad as e:
+            out, ok = str(e), False
     if pw:
         out = out.replace(pw, "********")              # no script should print it; never log or return it anyway
     log(S, caller, action, args, ok, out)
@@ -211,14 +312,15 @@ def test():
     S = {"KEEP_LOCAL": "admin", "OOD_ADMIN": "admin"}
     good = [("add-user", ["bob"]), ("remove-user", ["bob", "--delete-home"]), ("set-password", ["bob"]),
             ("team-create", ["nlp"]), ("team-add", ["nlp", "bob", "carol"]), ("limits", ["bob", "--gpus", "2"]),
-            ("limits", ["bob", "--reset"]), ("stop-endpoint", ["bob", "my-ep"]), ("endpoints", [])]
+            ("limits", ["bob", "--reset"]), ("stop-endpoint", ["bob", "my-ep"]), ("endpoints", []), ("log", []), ("jobs", []), ("cancel-job", ["1382"])]
     for a, args in good:
         plan(a, args, S)
     bad = [("add-user", ["Bob"]), ("add-user", ["bob;rm -rf /"]), ("add-user", ["-rf"]), ("remove-user", ["admin"]),
            ("remove-user", ["bob", "--yes"]), ("remove-user", ["bob", "--delete-home", "--delete-home"]),
            ("team-add", ["nlp"]), ("team-add", ["nlp", "../x"]), ("limits", ["bob", "--gpus", "99"]),
            ("limits", ["bob", "--gpus", "-1"]), ("limits", ["bob", "--cpu", "2"]), ("stop-endpoint", ["bob", "A_B"]),
-           ("users", ["x"]), ("rm", ["-rf", "/"]), ("add-user", [])]
+           ("users", ["x"]), ("rm", ["-rf", "/"]), ("add-user", []), ("cancel-job", ["1382;id"]), ("cancel-job", ["-1"]),
+           ("cancel-job", ["1", "2"])]
     for a, args in bad:
         try:
             plan(a, args, S)
@@ -239,13 +341,34 @@ def test():
                             "reservedFor": [{"resource": "pods", "name": "llm"}]}}])
     assert rows[0] == {"owner": "bob", "name": "llm", "state": "running", "runtime": "vllm", "model": "/models/q",
                        "node": "cn01", "gpus": ["cn01/gpu-0"], "since": "2026-10-13T10:00:00Z",
-                       "until": "2026-10-14T10:00:00Z", "stopped_by": None}, rows[0]
+                       "until": "2026-10-14T10:00:00Z", "stopped_by": None, "job": None}, rows[0]
     assert rows[1]["state"] == "stopped" and rows[1]["gpus"] == []
     loading = endpoints_from([{"metadata": {"namespace": "u-x", "name": "e", "annotations": {"model-hub/stopped-by": "admin"}}}],
                              [{"metadata": {"namespace": "u-x", "name": "e"}, "spec": {"nodeName": "cn01"},
                                "status": {"phase": "Running", "conditions": []}}], [])[0]
     assert loading["state"] == "loading" and loading["stopped_by"] is None, loading   # redeployed after an admin stop
-    print(f"ok: {len(good)} good requests planned, {len(bad)} bad ones refused, endpoint rows right")
+    T = lambda n: {"set": True, "infinite": False, "number": n}
+    sq = {"jobs": [
+        {"job_id": 1382, "user_name": "ankush", "partition": "standard", "name": "jupyter", "job_state": ["RUNNING"],
+         "nodes": "cn01", "start_time": T(1791876593), "end_time": T(1791890993), "gres_detail": ["gpu:a30:1(IDX:0)"],
+         "command": "/var/www/ood/apps/sys/jupyter/job.sh"},
+        {"job_id": 1400, "user_name": "slurm", "partition": "slurm-bridge", "name": "mh-bob-llm-x", "job_state": ["RUNNING"],
+         "nodes": "cn02", "start_time": T(1791876000), "end_time": T(1791962400), "gres_detail": ["gpu:a30:1(IDX:0)"], "command": "sleep"},
+        {"job_id": 1401, "user_name": "carol", "partition": "standard", "name": "train.sh", "job_state": ["RUNNING"],
+         "nodes": "cn[01-02]", "start_time": T(1791876000), "end_time": T(1791962400),
+         "gres_detail": ["gpu:a30:2(IDX:0-1)", "gpu:a30:1(IDX:3)"], "command": "/home/carol/train.sh"},
+        {"job_id": 1402, "user_name": "dave", "partition": "standard", "name": "vscode", "job_state": ["PENDING"],
+         "nodes": "", "start_time": T(0), "end_time": T(0), "state_reason": "Resources",
+         "command": "/var/www/ood/apps/sys/vscode/job.sh"}]}
+    eps = [{"owner": "bob", "name": "llm", "model": "/models/q", "job": "mh-bob-llm-x"}]
+    rows = {r["id"]: r for r in jobs_from(sq, eps, "slurm-bridge", lambda n: ["cn01", "cn02"] if n == "cn[01-02]" else [n])}
+    assert rows[1382]["kind"] == "session" and rows[1382]["app"] == "Jupyter" and rows[1382]["gpus"] == ["cn01/gpu-0"], rows[1382]
+    assert rows[1382]["since"] == "2026-10-13T07:29:53Z", rows[1382]["since"]
+    assert (rows[1400]["kind"], rows[1400]["owner"], rows[1400]["name"]) == ("endpoint", "bob", "llm"), rows[1400]
+    assert rows[1401]["kind"] == "job" and rows[1401]["gpus"] == ["cn01/gpu-0", "cn01/gpu-1", "cn02/gpu-3"], rows[1401]
+    assert rows[1402]["state"] == "pending" and rows[1402]["since"] is None and rows[1402]["why"] == "Resources" \
+        and rows[1402]["app"] == "VS Code" and rows[1402]["gpus"] == [], rows[1402]
+    print(f"ok: {len(good)} good requests planned, {len(bad)} bad ones refused, endpoint + job rows right")
 
 
 if __name__ == "__main__":

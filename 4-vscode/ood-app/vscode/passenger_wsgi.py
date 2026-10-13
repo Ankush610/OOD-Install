@@ -78,6 +78,14 @@ def sessions():
         f = os.path.join(DIR, jid + ".json")
         conn = json.load(open(f)) if state == "RUNNING" and os.path.isfile(f) else None
         out.append(dict(id=jid, state=state, where=where, left=left, reason=reason, conn=conn))
+    # sessions the admin stopped: 8-admin writes notices/<JOB>.<jobid> owned by us; it stays until our bin button
+    nd, running = SITE.get("notices", ""), {s["id"] for s in out}
+    for name in sorted(os.listdir(nd)) if nd and os.path.isdir(nd) else []:
+        f, (app, _, jid) = os.path.join(nd, name), name.partition(".")
+        if app == JOB and jid not in running and os.lstat(f).st_uid == ME.pw_uid:    # anyone can drop files there
+            who, _, when = open(f).read().strip().partition(" ")
+            out.append(dict(id=jid, state="STOPPED", where=APP["title"], left="", conn=None,
+                            reason=f"Stopped by the {who}" + (f" on {when}" if when else "")))
     return out
 
 
@@ -114,6 +122,15 @@ def stop(body):
     return {"stopped": jid}
 
 
+def dismiss(body):
+    """The bin button of a session the admin stopped: remove its notice (ours; the sticky dir stops anyone else)."""
+    jid = str(body["id"])
+    if not re.fullmatch(r"[0-9]{1,10}", jid):
+        raise Fail(f"bad session id {jid!r}")
+    os.remove(os.path.join(SITE["notices"], f"{JOB}.{jid}"))
+    return {"removed": jid}
+
+
 def e(s):
     return html.escape(str(s))
 
@@ -132,14 +149,20 @@ def card(s):
         why = "no free spot yet" if s["reason"] in ("Resources", "Priority") else s["reason"]
         pill, hint, act = ('<span class="status pulse text-warning-emphasis bg-warning-subtle">Waiting</span>',
                            f"In the queue: {e(why)}", "")
+    elif s["state"] == "STOPPED":
+        pill, hint, act = '<span class="status text-secondary-emphasis bg-secondary-subtle">Stopped</span>', e(s["reason"]), ""
     else:
         pill, hint, act = f'<span class="status text-secondary-emphasis bg-secondary-subtle">{e(s["state"].title())}</span>', "", ""
+    if s["state"] == "STOPPED":
+        btn = f"""<button class="btn btn-icon" type="button" title="Remove" aria-label="Remove session {e(s['id'])}" onclick="post('dismiss',{{id:'{e(s['id'])}'}})"><i class="bi bi-trash"></i></button>"""
+    else:
+        btn = f"""<button class="btn btn-sm btn-outline-danger" type="button" onclick="post('stop',{{id:'{e(s['id'])}'}})"><i class="bi bi-stop-circle me-1"></i>Stop</button>"""
     return f"""<li class="list-group-item d-flex flex-wrap align-items-center gap-3 py-3">
   <span class="kind-icon text-primary-emphasis bg-primary-subtle"><i class="bi bi-{APP['icon']}"></i></span>
   <div class="min-w-0 flex-grow-1"><div class="fw-medium">{e(s['where'])}</div>
     <div class="meta text-body-secondary"><span><i class="bi bi-hash"></i>{e(s['id'])}</span><span>{hint}</span></div></div>
   {pill}{act}
-  <button class="btn btn-sm btn-outline-danger" type="button" onclick="post('stop',{{id:'{e(s['id'])}'}})"><i class="bi bi-stop-circle me-1"></i>Stop</button></li>"""
+  {btn}</li>"""
 
 
 def page(base):
@@ -151,7 +174,8 @@ def page(base):
     opts = "".join(f'<option value="{v}" data-hint="{e(h)}">{e(label)}</option>' for v, label, h in choices())
     rows = "".join(card(s) for s in ss) or \
         '<li class="list-group-item py-4 text-center text-body-secondary">No sessions. Launch one above.</li>'
-    busy = any(not s["conn"] for s in ss)
+    live = [s for s in ss if s["state"] != "STOPPED"]
+    busy = any(not s["conn"] for s in live)
     return f"""<!doctype html><html lang="en" data-bs-theme="light"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{APP['title']}</title>
 <link rel="stylesheet" href="{HUB}vendor/bootstrap/bootstrap.min.css">
@@ -200,6 +224,8 @@ async function post(path,body,btn){{
 }}
 // ponytail: whole-page reload while a session waits or starts; switch to polling a JSON list if it gets in the way
 {'setTimeout(()=>location.reload(),4000);' if busy else ''}
+// a running session can be stopped by its time limit or the admin: look again now and then (not while typing)
+{'setTimeout(function r(){document.activeElement.matches(`input,select`)?setTimeout(r,30000):location.reload()},30000);' if live and not busy else ''}
 const t=document.getElementById('theme'),ic=()=>t.innerHTML='<i class="bi bi-'+(document.documentElement.dataset.bsTheme==='dark'?'sun':'moon-stars')+'"></i>';ic();
 t.onclick=()=>{{const v=document.documentElement.dataset.bsTheme==='dark'?'light':'dark';document.documentElement.dataset.bsTheme=v;ic();try{{localStorage.setItem('mh-theme',v)}}catch(e){{}}}};
 </script></body></html>"""
@@ -220,6 +246,8 @@ def application(environ, start_response):
             status, payload = "200 OK", launch(body)
         elif path == "/api/stop":
             status, payload = "200 OK", stop(body)
+        elif path == "/api/dismiss":
+            status, payload = "200 OK", dismiss(body)
         else:
             status, payload = "404 Not Found", {"error": f"no route {path}"}
     except (Fail, KeyError, ValueError, OSError, subprocess.SubprocessError) as x:

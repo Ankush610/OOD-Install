@@ -35,6 +35,7 @@ This cluster: laptop → `network-node` (10.208.34.138) → `master` (192.168.40
 7-jupyter/1-install-jupyter.sh  standalone Python + venv + requirements.txt -> JUPYTER_ROOT/<lab>-py<py>, current symlink
 7-jupyter/2-install-ood-app.sh  4-vscode's page + ood-app/jupyter -> /var/www/ood/apps/sys/jupyter (site.json "app": "jupyter")
 8-admin/1-install.sh        root helper for the admin page: aistack-admin.py -> ADMIN_HELPER, sudo rule for OOD_ADMIN only, ADMIN_LOG
+8-admin/2-install-ood-app.sh  admin page (OOD app aistack_admin, Model Hub's look) readable by OOD_ADMIN only; every button = one helper call
 ```
 
 Local sanity checks (no tests or linters):
