@@ -4,7 +4,7 @@ VS Code in the browser (**code-server**) from an OOD page in the Model Hub look:
 
 ```
                    one install on shared /home: $CODE_SERVER_ROOT/current/bin/code-server
-page "Launch" ──sbatch─►  ┌─ "Editor only" → partition viewer on master: 1 CPU (shared), VSCODE_MEM
+page "Launch" ──sbatch─►  ┌─ "Editor only" → partition viewer on LOGIN_HOST: 1 CPU (shared), VSCODE_MEM
                          └─ "GPU node: n x <type>" → GPU partition: n GPUs + n x their share of CPUs/RAM
 browser ◄── /rnode/<ip>/<port>/ (OOD proxy, per-session password) ──► code-server as <user>
 ```
@@ -17,15 +17,17 @@ These sessions don't show under OOD's **My Interactive Sessions**; the VS Code p
 ```
 ```
 
-## Run (on master, after ../1-ldap and ../2-ood)
+## Run (after ../1-ldap and ../2-ood)
 
 ```bash
-sudo bash 1-install-code-server.sh   # code-server CODE_SERVER_VERSION -> CODE_SERVER_ROOT (shared /home)
-sudo bash 2-slurm-viewer.sh          # partition "viewer" on master with OverSubscribe=FORCE:<n>
-sudo bash 3-install-ood-app.sh       # the OOD app, then Restart Web Server in OOD
+sudo bash 1-install-code-server.sh   # master: code-server CODE_SERVER_VERSION -> CODE_SERVER_ROOT (shared /home)
+sudo bash 2-slurm-viewer.sh          # master (slurmctld): partition "viewer" on LOGIN_HOST with OverSubscribe=FORCE:<n>
+sudo bash 3-install-ood-app.sh       # LOGIN_HOST: the OOD app, then Restart Web Server in OOD
 ```
+`LOGIN_HOST` needs munge + `slurmd` (it runs the sessions); `2-slurm-viewer.sh` reads its hardware and restarts its
+`slurmd` over root ssh.
 
-**Why master's Slurm node is called `viewer01` (`VIEWER_NODE`), not `master`:** slurm-bridge taints every k8s node
+**Why the viewer Slurm node is called `viewer01` (`VIEWER_NODE`), not `master`:** slurm-bridge taints every k8s node
 whose name matches a Slurm node (`slinky.slurm.net/managed-node:NoExecute`) and re-adds the taint if removed.
 Named `master`, that evicted every pod on master without the toleration: coredns (cluster DNS), cert-manager,
 gpu-operator, KEDA, Prometheus, MetalLB. A different `NodeName` with `NodeHostname=master` is the same machine to
@@ -37,9 +39,9 @@ Slurm but no match for slurm-bridge (tested 2026-09-30: taint removed, not re-ad
 
 A session with n GPUs asks Slurm for `--gres=gpu:n` (any GPU type), `n x` the per-GPU share of cores and `n x` the per-GPU share of RAM, so 8 GPUs = the whole node, 1 GPU = 1/8 of it. VS Code then runs **on that node**: its terminal, notebooks and debugger see those GPUs (`CUDA_VISIBLE_DEVICES`). The GPUs stay held until the session ends (hours picked, or `VSCODE_IDLE_SECONDS` without a browser), so long training belongs in `sbatch`, which frees them when done.
 
-## Master: sessions and SSH side by side
+## The login node: sessions and SSH side by side
 
-Master (48 cores / 192 GB here) runs the tool sessions **and** everything else: SSH logins, OOD, LDAP, the k8s control plane, MLflow, slurmctld, the registry. `2-slurm-viewer.sh` splits it with Slurm's own reservation settings, taking the hardware from `slurmd -C`:
+The login node (here: master, 48 cores / 192 GB) runs the tool sessions **and** everything else: SSH logins, OOD, LDAP, the k8s control plane, MLflow, slurmctld, the registry. `2-slurm-viewer.sh` splits it with Slurm's own reservation settings, taking the hardware from `slurmd -C`:
 
 | | Cores | Memory | Used by |
 |---|---|---|---|
@@ -69,7 +71,7 @@ Extensions install from **Open VSX** (open-vsx.org), not Microsoft's marketplace
 | File | What it does |
 |---|---|
 | `1-install-code-server.sh` | release tarball (resumes a dropped download) -> `CODE_SERVER_ROOT/<version>`, `current` symlink, checks `--version` on master and each compute node |
-| `2-slurm-viewer.sh` | sets `NodeName=<VIEWER_NODE> NodeHostname=<master>` from `slurmd -C` (98% of RAM) + `CoreSpecCount`/`MemSpecLimit`, and the `viewer` partition with `OverSubscribe=FORCE:n`; copies `slurm.conf` to the compute nodes; restarts slurmctld + master's slurmd only if the node line changed, then `scontrol reconfigure` |
+| `2-slurm-viewer.sh` | sets `NodeName=<VIEWER_NODE> NodeHostname=<LOGIN_HOST>` from `slurmd -C` on `LOGIN_HOST` (98% of RAM) + `CoreSpecCount`/`MemSpecLimit`, and the `viewer` partition with `OverSubscribe=FORCE:n`; copies `slurm.conf` to `LOGIN_HOST` and the compute nodes; restarts slurmctld + `LOGIN_HOST`'s slurmd only if the node line changed, then `scontrol reconfigure` |
 | `3-install-ood-app.sh` | copies `ood-app/vscode` to `/var/www/ood/apps/sys/vscode`, fills `${...}` in `job.sh` from `site.conf`, writes `site.json` (partitions, `VSCODE_MEM`, GPU sizes from `gpu-detect.sh`) |
 | `gpu-detect.sh` | reads `sinfo`: the GPU partition (`GPU_PARTITION=auto`: the default one with GPUs, else the first), GPU type, GPUs per node, and each GPU's share of the node (cores ÷ GPUs, 90% of RAM ÷ GPUs, smallest node) |
 | `ood-app/vscode/passenger_wsgi.py` | the page, **shared with ../7-jupyter** (`site.json` `"app"` picks the texts; rerun both installers after a change) (stdlib only, Model Hub's Bootstrap + `style.css`): choices, `sbatch` with the Slurm options for each, session list from `squeue -n vscode`, Connect, Stop (`scancel`). Deletes files older than 7 days in `~/.vscode-sessions` |
@@ -87,7 +89,8 @@ Set `CODE_SERVER_VERSION` in `site.conf`, rerun `1-install-code-server.sh` (it f
 |---|---|---|
 | `1-install-code-server.sh`: `unexpected end of file` / `Download failed` | the download dropped | rerun: it resumes the partial file |
 | session stays **Waiting** | `viewer` is out of memory (sessions × `VSCODE_MEM` > RAM − `VIEWER_RESERVED_MEM_MB`), or no free GPU | `squeue -p viewer`; lower `VSCODE_MEM` or the reservation, or wait |
-| master **drained**, `Reason=Low RealMemory` | `RealMemory` above what the kernel reports | rerun `2-slurm-viewer.sh` (it takes 98% of `slurmd -C`), then `scontrol update nodename=<VIEWER_NODE> state=resume` |
+| `2-slurm-viewer.sh`: `slurmd -C on <LOGIN_HOST> says: ...` / `systemctl cat slurmd` fails | no root ssh from master to `LOGIN_HOST`, or no `slurmd` there | install Slurm + munge on `LOGIN_HOST` (copy `slurmd.service` from a compute node), `ssh root@<LOGIN_HOST> slurmd -C` from master |
+| `VIEWER_NODE` **drained**, `Reason=Low RealMemory` | `RealMemory` above what the kernel reports | rerun `2-slurm-viewer.sh` (it takes 98% of `slurmd -C`), then `scontrol update nodename=<VIEWER_NODE> state=resume` |
 | GPU choices are wrong or missing after adding/changing GPU nodes | the form is written at install time from `sinfo` | rerun `3-install-ood-app.sh`, then Restart Web Server |
 | `sbatch` from VS Code's terminal fails, the same script works from SSH | the session is itself a Slurm job; its `SLURM_*` variables leaked into the new job (e.g. `SLURM_MEM_PER_NODE` vs `SLURM_MEM_PER_CPU`) | the job script clears `SLURM_*`/`SBATCH_*` before starting code-server; rerun `3-install-ood-app.sh` and start a new session |
 | cluster DNS down; coredns, KEDA, Prometheus… **Pending** (`untolerated taint`) | master's Slurm node is named like the k8s node (`NodeName=master`), so slurm-bridge taints master `NoExecute` | set `VIEWER_NODE` (≠ hostname), rerun `2-slurm-viewer.sh`: it renames the node and removes the taint |

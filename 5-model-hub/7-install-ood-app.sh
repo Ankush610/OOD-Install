@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Install the Model Hub OOD app (runs as each logged-in user; see ood-app/model_hub/passenger_wsgi.py).
 # site.json: MLflow URI, serving images (images/built.env), GPU types (sinfo), partition, hours, MODELS_ROOT.
-# Run on master after 4-images.sh: sudo bash 7-install-ood-app.sh      then Restart Web Server in OOD
+# Run on LOGIN_HOST after 4-images.sh: sudo bash 7-install-ood-app.sh      then Restart Web Server in OOD
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/../site.conf"
 export PATH="$SLURM_BIN:$PATH" SLURM_CONF
 [ "$(id -u)" = 0 ] || { echo "Run with sudo." >&2; exit 1; }
+[ "$(hostname -s)" = "$LOGIN_HOST" ] || { echo "Run this on $LOGIN_HOST (LOGIN_HOST)." >&2; exit 1; }
 APPS=/var/www/ood/apps/sys
 APP=$APPS/model_hub
 [ -d "$APPS" ] || { echo "No $APPS: run ../2-ood/setup-ood.sh first." >&2; exit 1; }
@@ -19,15 +20,13 @@ rm -rf "$APP"
 cp -r "$HERE/ood-app/model_hub" "$APP"
 cp "$HERE/render.py" "$APP/"
 rm -rf "$APP/__pycache__"
-# the gateway's self-signed CA (8-gateway.sh), so users can download it from My API key; none with a customer cert.
+# the gateway's self-signed CA (8-gateway.sh writes GATEWAY_CA on master; this node has no cluster admin config),
+# so users can download it from My API key; none with a customer cert.
 # Next to the app, NOT in public/: served from there as application/x-x509-ca-cert, which Chrome tries to install
 # as a certificate instead of saving ("Failed - network error"); the backend sends it as a plain download
 ca=no
-if [ -z "$GATEWAY_TLS_SECRET" ] && KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n "$GATEWAY_NS" get secret rudra-ca \
-     -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 -d > "$APP/gateway-ca.crt" && [ -s "$APP/gateway-ca.crt" ]; then
-  ca=yes
-else
-  rm -f "$APP/gateway-ca.crt"
+if [ -z "$GATEWAY_TLS_SECRET" ] && [ -s "$GATEWAY_CA" ]; then
+  cp "$GATEWAY_CA" "$APP/gateway-ca.crt"; ca=yes
 fi
 
 echo "== 2. site.json"
@@ -49,7 +48,7 @@ json.dump({
     "hours_default": $ENDPOINT_HOURS_DEFAULT, "hours_max": $ENDPOINT_HOURS_MAX,   # per-user limits: their quota
     "slurm_bin": "$SLURM_BIN",
     "slurm_conf": "$SLURM_CONF",
-    "ldap_base": "$LDAP_BASE",
+    "ldap_base": "$LDAP_BASE", "ldap_uri": "$LDAP_URI", "ldap_ca": "$LDAP_CA",
     "gateway": {"url": "$GATEWAY_URL", "ca": "$ca" == "yes"},
     "models_root": "$MODELS_ROOT",
     "ssh": {"login": "$MASTER_HOST", "jump": "$SSH_JUMP"},

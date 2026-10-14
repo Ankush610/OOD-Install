@@ -66,9 +66,10 @@ kubectl -n "$GATEWAY_NS" rollout status deploy/gateway --timeout=180s
 echo "== 5. Check"
 kubectl -n "$GATEWAY_NS" get pod -l app=gateway -o wide
 kubectl -n "$GATEWAY_NS" get svc gateway
-ca=$(mktemp); trap 'rm -f "$ca"' EXIT
+ca=$GATEWAY_CA          # public: on the shared /home, so 7-install-ood-app.sh (LOGIN_HOST, no cluster admin config) finds it
 if [ -z "$GATEWAY_TLS_SECRET" ]; then
-  kubectl -n "$GATEWAY_NS" get secret rudra-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > "$ca"
+  install -d -m 755 "${ca%/*}"
+  kubectl -n "$GATEWAY_NS" get secret rudra-ca -o jsonpath='{.data.ca\.crt}' | base64 -d > "$ca"; chmod 644 "$ca"
   cacert=(--cacert "$ca" --resolve "${GATEWAY_HOST:-x}:443:$GATEWAY_IP")
 else cacert=(); fi
 for _ in $(seq 20); do curl -sf -o /dev/null "${cacert[@]}" "$GATEWAY_URL/healthz" && break; sleep 3; done
@@ -78,5 +79,5 @@ cat <<EOF
 
 Done. Gateway: $GATEWAY_URL
 Next: sudo bash 2-sync-users.sh   (lets the gateway read keys + endpoints in every user namespace)
-      sudo bash 7-install-ood-app.sh, Restart Web Server -> Model Hub -> My API key
+      sudo bash 7-install-ood-app.sh on $LOGIN_HOST, Restart Web Server -> Model Hub -> My API key
 EOF

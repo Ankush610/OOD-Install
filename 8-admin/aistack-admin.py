@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""The admin page's way to root (build-plan step 8). Installed root-owned as /usr/local/sbin/aistack-admin by
-1-install.sh; sudoers lets OOD_ADMIN (and only that account) run it without a password. It does a FIXED list of
+"""The admin page's way to root (build-plan step 8). Installed root-owned on master as /usr/local/sbin/aistack-admin by
+1-install.sh. Two ways in, both for OOD_ADMIN only: sudo on master (the terminal), and the admin page's ssh key
+(ADMIN_KEY on LOGIN_HOST), whose line in root's authorized_keys forces `aistack-admin --ssh`: the request is then
+SSH_ORIGINAL_COMMAND, split like a shell would (shlex) but never run by one. It does a FIXED list of
 things, checks every argument, and calls the same scripts the admin runs by hand, so no logic lives twice:
 
   read      users                         LDAP people + teams + Model Hub limits
@@ -23,12 +25,14 @@ things, checks every argument, and calls the same scripts the admin runs by hand
 Answer: one JSON object on stdout, {"ok": true|false, "output": "<what the script printed>", "data": ...}.
 Every change goes to ADMIN_LOG (who, what, result; never a password). One change at a time (a lock).
   sudo aistack-admin <action> [args]       aistack-admin --test   (self-check, no root)
+  ssh -i ADMIN_KEY root@MASTER_HOST '<action> [args]'       (each argument shlex-quoted; passwords still on stdin)
 """
 import fcntl
 import json
 import os
 import pwd
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -286,11 +290,13 @@ def log(S, caller, action, args, ok, detail=""):
         f.write(line + "\n")
 
 
-def main(argv):
+def main(argv, ssh=False):
     if os.getuid() != 0:
         return {"ok": False, "output": "run with sudo"}
     S = site()
-    caller = os.environ.get("SUDO_USER", "root")
+    # ssh: only the admin page's key reaches this (forced command in root's authorized_keys, from LOGIN_IP only),
+    # and only OOD_ADMIN can read that key, so the key IS the admin. sudo: sudo says who asked.
+    caller = S.get("OOD_ADMIN") if ssh else os.environ.get("SUDO_USER", "root")
     if not argv:
         return {"ok": False, "output": __doc__}
     action, args = argv[0], argv[1:]
@@ -356,6 +362,9 @@ def test():
     assert cmd[-2:] == ["--delete-mlflow", "--yes"] and not pw and change
     assert plan("add-user", ["bob"], S)[1] is True                       # password from stdin, never in argv
     assert plan("cancel-job", ["7", " why\r\nnow "], S)[0] == ["cancel-job", "7", "why\nnow"]
+    # the page quotes (shlex.join), --ssh splits: every argument comes back exactly, nothing gets split or run
+    for args in (["cancel-job", "7", "it's \"idle\";\n$(rm -rf /) `id` | x & y"], ["team-add", "nlp", "bob carol"], ["log"]):
+        assert shlex.split(shlex.join(args)) == args, args
     rows = endpoints_from(
         svcs=[{"metadata": {"namespace": "u-bob", "name": "llm", "labels": {"model-hub/runtime": "vllm"},
                             "annotations": {"model-hub/model": "/models/q", "model-hub/expires": "2026-10-14T10:00:00Z"}}},
@@ -401,6 +410,12 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--test"]:
         test()
         sys.exit()
-    res = main(sys.argv[1:])
+    if sys.argv[1:] == ["--ssh"]:                     # forced command of the admin page's key (1-install.sh)
+        try:
+            res = main(shlex.split(os.environ.get("SSH_ORIGINAL_COMMAND", "")), ssh=True)
+        except ValueError as e:                      # unbalanced quotes: not something the page sends
+            res = {"ok": False, "output": f"bad request: {e}"}
+    else:
+        res = main(sys.argv[1:])
     print(json.dumps(res))
     sys.exit(0 if res["ok"] else 1)

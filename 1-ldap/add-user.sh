@@ -97,7 +97,7 @@ fi
 echo "== 8. One-time password: $U chooses their own at the first web login (skipped if 6-keycloak isn't installed)"
 # web only: someone who only ever uses SSH keeps this password until they change it (passwd, or the account page)
 if [ -f "$KEYCLOAK_DATA/admin.pass" ]; then
-  KC_URL=http://127.0.0.1:$KEYCLOAK_PORT$KEYCLOAK_PATH KEYCLOAK_ADMIN=$KEYCLOAK_ADMIN KEYCLOAK_DATA=$KEYCLOAK_DATA \
+  KC_URL=$KEYCLOAK_URL KEYCLOAK_ADMIN=$KEYCLOAK_ADMIN KEYCLOAK_DATA=$KEYCLOAK_DATA \
     KEYCLOAK_REALM=$KEYCLOAK_REALM python3 "$HERE/../6-keycloak/kc.py" must-change "$U"
 else
   echo "Keycloak not installed, skipped."

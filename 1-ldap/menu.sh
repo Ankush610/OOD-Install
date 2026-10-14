@@ -152,7 +152,7 @@ teams_menu() {
 }
 
 # ---------- checks ----------
-nodes() { echo "$MASTER_HOST" $COMPUTE_NODES | tr ' ' '\n' | awk 'NF && !s[$0]++'; }
+nodes() { echo "$MASTER_HOST" $LOGIN_NODES $COMPUTE_NODES | tr ' ' '\n' | awk 'NF && !s[$0]++'; }
 on() {  # on <node> <command>: here, or as root over ssh (like add-user.sh)
   if [ "$1" = "$(hostname -s)" ]; then bash -c "$2"; else ssh -o ConnectTimeout=5 -o BatchMode=yes "root@$1" "$2"; fi
 }

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Install the "MLflow (shared)" OOD page: server status, tracking URI + Copy, experiment naming (<user>/<name>),
 # a chat-model (LLM) notice and a Questions FAQ (file layout, naming, getting models into Model Hub, errors), Open MLflow.
-# Run on master after ../2-ood: sudo bash 4-install-ood-app.sh     then Restart Web Server in OOD
+# Run on LOGIN_HOST after ../2-ood: sudo bash 4-install-ood-app.sh     then Restart Web Server in OOD
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/../site.conf"
 [ "$(id -u)" = 0 ] || { echo "Run with sudo." >&2; exit 1; }
+[ "$(hostname -s)" = "$LOGIN_HOST" ] || { echo "Run this on $LOGIN_HOST (LOGIN_HOST)." >&2; exit 1; }
 APPS=/var/www/ood/apps/sys
 APP=$APPS/mlflow_k8s
 

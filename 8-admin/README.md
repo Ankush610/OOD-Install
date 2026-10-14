@@ -11,17 +11,20 @@ with four tabs, and the root helper every button goes through.
 | Log | `ADMIN_LOG`, newest first, incl. refused attempts | |
 
 ```
- admin page (OOD app, runs as OOD_ADMIN)  ──sudo -n──►  ADMIN_HELPER (root)  ──►  1-ldap/*.sh, 5-model-hub/2-sync-users.sh,
-                                                         fixed actions,            kubectl (stop an endpoint, lists)
-                                                         every argument checked
-                                                         ──► ADMIN_LOG (who, what, when, result)
+ LOGIN_HOST                                         MASTER_HOST
+ admin page (OOD app, runs as OOD_ADMIN)  ──ssh──►  root, forced command    ──►  1-ldap/*.sh, 5-model-hub/2-sync-users.sh,
+   key ADMIN_KEY (OOD_ADMIN only)        ADMIN_KEY  ADMIN_HELPER --ssh            kubectl (stop an endpoint, lists)
+   each argument shlex-quoted                       fixed actions, every argument checked
+                                                    ──► ADMIN_LOG (who, what, when, result)
+ terminal on master: sudo ADMIN_HELPER ... (OOD_ADMIN only)
 ```
 
-## Install (on master)
+## Install
 
 ```bash
-sudo bash 1-install.sh            # helper -> ADMIN_HELPER, sudo rule for OOD_ADMIN, log; checks admin may and an LDAP user may not
-sudo bash 2-install-ood-app.sh    # the page -> /var/www/ood/apps/sys/aistack_admin, readable by OOD_ADMIN only
+sudo bash 1-install.sh            # master: helper -> ADMIN_HELPER, sudo rule, log, the page's ssh key (made on LOGIN_HOST,
+                                  # authorized in /root/.ssh/authorized_keys); checks admin may and an LDAP user may not
+sudo bash 2-install-ood-app.sh    # LOGIN_HOST: the page -> /var/www/ood/apps/sys/aistack_admin, readable by OOD_ADMIN only
 # then, logged in to OOD as OOD_ADMIN: Restart Web Server -> Interactive Apps -> Admin
 ```
 
@@ -48,7 +51,8 @@ Answers are one JSON line: `{"ok": …, "output": "<what the script printed>", "
 
 | What | Why |
 |---|---|
-| `sudo` + one helper, not a daemon | the page runs as `OOD_ADMIN`; sudo already knows who is asking (`SUDO_USER`) and logs it; no socket or service to run |
+| one helper, not a daemon; the page reaches it over ssh | the helper needs master (LDAP Directory Manager password, `admin.conf`, `ldap://localhost`), the page runs on `LOGIN_HOST`. Root's `authorized_keys` line is `restrict,from="LOGIN_IP",command="ADMIN_HELPER --ssh"`: no shell, pty or forwarding, only from the login node, only the helper. The key file is readable by `OOD_ADMIN` alone, so the key holder **is** the admin (the helper logs it as `OOD_ADMIN`); on master's terminal sudo says who asks (`SUDO_USER`). The login node gets no other way to root on master |
+| the request: `shlex.join` on the page, `shlex.split(SSH_ORIGINAL_COMMAND)` in the helper | ssh sends one command line; quoting every argument and splitting it again (never a shell) gives back exactly the argv the page meant (`--test` checks `$(…)`, quotes, newlines) |
 | fixed actions, regex-checked names, no shell | the page sends what a browser sends: nothing it says becomes a command |
 | calls the existing scripts | the terminal and the page do exactly the same thing |
 | passwords on stdin, removed from output before logging | never in a process list, the log, or the answer |
@@ -61,13 +65,14 @@ Answers are one JSON line: `{"ok": …, "output": "<what the script printed>", "
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `sudo: a password is required` from the page | sudo rule missing, or another rule after it wins | rerun `1-install.sh` (its check fails if `OOD_ADMIN` can't run it) |
+| `sudo: a password is required` (terminal on master) | sudo rule missing, or another rule after it wins | rerun `1-install.sh` (its check fails if `OOD_ADMIN` can't run it) |
+| the page: `the admin helper didn't answer: Permission denied (publickey)` / `Host key verification failed` | the key isn't in master's `/root/.ssh/authorized_keys`, `LOGIN_IP` isn't the address master sees, sshd refuses root (`PermitRootLogin no`), or master's host key changed | rerun `1-install.sh` on master (rewrites the line and `ADMIN_KEY.known_hosts`); `PermitRootLogin prohibit-password`; check `LOGIN_IP` against `who`/`/var/log/secure` on master |
 | `<user> may not use the admin tool` | the caller isn't `OOD_ADMIN` | only that account; refused attempts are in `ADMIN_LOG` |
 | `endpoints`/`users`: `kubectl ...` error | Model Hub not set up, or k8s down | `kubectl get nodes` as root |
 | a change seems to hang | another change holds the lock (e.g. `remove-user` waits up to 5 min for a namespace) | wait; `sudo tail ADMIN_LOG` |
 | `sudo: aistack-admin: command not found` | sudo's `secure_path` (EL9) has no `/usr/local/sbin` | use the full path `ADMIN_HELPER` |
 | the Admin app isn't in the menu | not installed, or OOD caches the app list | `2-install-ood-app.sh`, then Restart Web Server (as admin) |
-| the page says `the admin helper didn't answer` | helper missing or sudo rule gone | `1-install.sh` |
+| the page says `the admin helper didn't answer` | helper missing on master, or the key / its `authorized_keys` line gone | `1-install.sh` on master |
 | Admin is in no menu although installed | `manifest.yml` didn't parse (a `: ` in the unquoted description); OOD ignores it silently, so no category | quote the text; `2-install-ood-app.sh` now checks the manifest |
 | not in Running: something a user started over SSH on master, outside Slurm | only Slurm jobs are listed | by hand: `ps -u <user>`; a "processes on master" view could come later |
 | Stop endpoint: `error: name cannot be provided when a selector is specified` | old helper ran `kubectl get svc NAME -l ...` | fixed: `sudo bash 1-install.sh` |

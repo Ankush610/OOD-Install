@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Configure Keycloak through its admin REST API (stdlib only). Called by 1-install.sh and 2-realm.sh.
 
-Reads everything from the environment (the scripts export site.conf): KC_URL (http://127.0.0.1:<port><path>),
+Reads everything from the environment (the scripts export site.conf): KC_URL (site.conf KEYCLOAK_URL),
 KEYCLOAK_ADMIN, KEYCLOAK_DATA (admin.pass lives there). Passwords are read from files, never from argv.
 
   kc.py admin   make KEYCLOAK_ADMIN a permanent admin, then delete the first-start bootstrap admin

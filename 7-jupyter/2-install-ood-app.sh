@@ -3,7 +3,7 @@
 #   for both) + ood-app/jupyter (manifest, job.sh) -> /var/www/ood/apps/sys/jupyter, fills ${...} in job.sh from
 #   ../site.conf, writes site.json (partitions, GPU sizes from Slurm). Sessions use 4-vscode's viewer partition.
 # Edit the sources and rerun; never edit the installed copy.
-# Run on master after 1 and ../4-vscode/2-slurm-viewer.sh: sudo bash 2-install-ood-app.sh     then Restart Web Server in OOD
+# Run on LOGIN_HOST after 1 and ../4-vscode/2-slurm-viewer.sh: sudo bash 2-install-ood-app.sh     then Restart Web Server in OOD
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -12,6 +12,7 @@ source "$HERE/../site.conf"
 # (then the tools look for a config in DNS: "resolve_ctls_from_dns_srv ... Unknown host")
 export PATH="$SLURM_BIN:${SLURM_BIN%/bin}/sbin:$PATH" SLURM_CONF
 [ "$(id -u)" = 0 ] || { echo "Run with sudo." >&2; exit 1; }
+[ "$(hostname -s)" = "$LOGIN_HOST" ] || { echo "Run this on $LOGIN_HOST (LOGIN_HOST)." >&2; exit 1; }
 APPS=/var/www/ood/apps/sys
 APP=$APPS/jupyter
 PAGE=$HERE/../4-vscode/ood-app/vscode/passenger_wsgi.py

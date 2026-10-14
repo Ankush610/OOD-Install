@@ -2,7 +2,7 @@
 # Install the "VS Code" OOD page (Passenger app, Model Hub look): copies ood-app/vscode to /var/www/ood/apps/sys/vscode,
 #   fills ${...} in job.sh from ../site.conf, writes site.json (partitions, GPU sizes from Slurm).
 # Edit ood-app/ and rerun; never edit the installed copy.
-# Run on master after 1 and 2: sudo bash 3-install-ood-app.sh     then Restart Web Server in OOD
+# Run on LOGIN_HOST after 1 and 2: sudo bash 3-install-ood-app.sh     then Restart Web Server in OOD
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -11,6 +11,7 @@ source "$HERE/../site.conf"
 # (then the tools look for a config in DNS: "resolve_ctls_from_dns_srv ... Unknown host")
 export PATH="$SLURM_BIN:${SLURM_BIN%/bin}/sbin:$PATH" SLURM_CONF
 [ "$(id -u)" = 0 ] || { echo "Run with sudo." >&2; exit 1; }
+[ "$(hostname -s)" = "$LOGIN_HOST" ] || { echo "Run this on $LOGIN_HOST (LOGIN_HOST)." >&2; exit 1; }
 APPS=/var/www/ood/apps/sys
 APP=$APPS/vscode
 

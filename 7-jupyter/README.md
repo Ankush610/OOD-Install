@@ -4,7 +4,7 @@ JupyterLab in the browser from an OOD page that looks like VS Code's: **Interact
 
 ```
                    one install on shared /home: $JUPYTER_ROOT/current/bin/jupyter (own Python 3.12)
-page "Launch" ──sbatch─►  ┌─ "Notebook only" → partition viewer on master: 1 CPU (shared), JUPYTER_MEM
+page "Launch" ──sbatch─►  ┌─ "Notebook only" → partition viewer on LOGIN_HOST: 1 CPU (shared), JUPYTER_MEM
                          └─ "GPU node: n x <type>" → GPU partition: n GPUs + n x their share of CPUs/RAM
 browser ◄── /node/<ip>/<port>/ (OOD proxy, per-session token) ──► jupyter lab as <user>
                                                                    └─ kernels: containers (apptainer --nv) or the user's own
@@ -14,7 +14,7 @@ browser ◄── /node/<ip>/<port>/ (OOD proxy, per-session token) ──► ju
 
 **Shared with 4-vscode (not copied):** the page (`../4-vscode/ood-app/vscode/passenger_wsgi.py`, `site.json` `"app": "jupyter"` picks the texts), `gpu-detect.sh`, and the `viewer` partition. Change the page there; rerun both installers.
 
-## Run (on master, after ../4-vscode)
+## Run (on master, after ../4-vscode; `2-install-ood-app.sh` on `LOGIN_HOST`)
 
 ```bash
 sudo bash 1-install-jupyter.sh    # own Python + JupyterLab (requirements.txt) -> JUPYTER_ROOT, container kernels

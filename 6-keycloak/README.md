@@ -14,10 +14,15 @@ Design: `../../AI-Stack/docs/model-hub/versions/version-2/` (build-plan step 2).
 
 ## Run (on master, after 0-registry, 1-ldap, 2-ood)
 
+Keycloak stays on master next to LDAP (`add-user`, `remove-user`, `set-password` talk to it). OOD's Apache on
+`LOGIN_HOST` reaches it at `KEYCLOAK_URL` (`MASTER_IP`), which firewalld opens for `LOGIN_IP` only.
+
 ```bash
-sudo bash ../2-ood/setup-ood.sh   # once: adds the /auth proxy to OOD's Apache (safe to rerun)
-sudo bash 1-install.sh            # Postgres + Keycloak under systemd, images in the registry, permanent admin
-sudo bash 2-realm.sh              # realm $KEYCLOAK_REALM with the LDAP users + groups; prints how to test a login
+sudo bash ../2-ood/setup-ood.sh   # on LOGIN_HOST, once: OOD's certificate + the /auth proxy (safe to rerun)
+sudo bash 1-install.sh            # Postgres + Keycloak under systemd, images in the registry, firewall, permanent admin;
+                                  # fetches OOD_CERT from LOGIN_HOST (root ssh) to trust OOD's logout endpoint
+sudo bash 2-realm.sh              # realm $KEYCLOAK_REALM with the LDAP users + groups; client "ood" (secret -> LOGIN_HOST);
+                                  # asks once for a Keycloak password for OOD_ADMIN; prints how to test a login
 ```
 
 This step only installs Keycloak. OOD and MLflow still use their old logins until their own steps switch them
@@ -27,24 +32,25 @@ This step only installs Keycloak. OOD and MLflow still use their old logins unti
 
 ```bash
 sed -i 's/^OOD_AUTH=ldap /OOD_AUTH=keycloak /' ../site.conf
-sudo bash ../2-ood/setup-ood.sh     # makes Keycloak client "ood"; asks once for a Keycloak password for OOD_ADMIN
+sudo bash ../2-ood/setup-ood.sh     # on LOGIN_HOST: uses client "ood" (2-realm.sh made it and copied its secret)
 ```
 Then open `https://$OOD_SERVERNAME`: the Keycloak login page comes first, then OOD. **Going back:** set
 `OOD_AUTH=ldap` and rerun `setup-ood.sh` (nothing in Keycloak needs undoing).
 
 | What | Where | Why |
 |---|---|---|
-| client `ood` (confidential, browser login only, PKCE) | Keycloak realm `KEYCLOAK_REALM`; secret in `/etc/ood/oidc-client.secret` (root, 0600) | OOD's Apache (`mod_auth_openidc`) logs users in through it; returns to `https://$OOD_SERVERNAME/oidc` only |
+| client `ood` (confidential, browser login only, PKCE) | Keycloak realm `KEYCLOAK_REALM`; secret in `OOD_OIDC_SECRET` on `LOGIN_HOST` (root, 0600), copied there by `2-realm.sh` | OOD's Apache (`mod_auth_openidc`) logs users in through it; returns to `https://$OOD_SERVERNAME/oidc` only |
 | username = `preferred_username` | `oidc_remote_user_claim` | = the LDAP `uid` = the Linux user the OOD session runs as |
-| Apache → Keycloak on `127.0.0.1` | `oidc_provider_metadata_url` | no certificate trouble; Keycloak still gives the browser its public `https://…/auth` address |
-| `OOD_ADMIN` = local Keycloak user | `kc.py local-user` | not in LDAP; the way in when LDAP is down (htpasswd isn't used with Keycloak) |
+| Apache → Keycloak on `KEYCLOAK_URL` (plain HTTP to `MASTER_IP`) | `oidc_provider_metadata_url`, `/auth` proxy | no certificate trouble; Keycloak still gives the browser its public `https://…/auth` address. The cluster LAN sees the login form and tokens: fine on a private rack (`# ponytail:` in `1-install.sh`) |
+| `OOD_ADMIN` = local Keycloak user | `kc.py local-user` (`2-realm.sh`) | not in LDAP; the way in when LDAP is down (htpasswd isn't used with Keycloak) |
 | sessions 8 h | `oidc_session_*` | then Keycloak asks again (silently if its own session is still valid) |
 | `/etc/ood/config/ood_portal.yml` mode 0600 | `setup-ood.sh` | it holds the client secret |
 
 ## How it runs
 
 ```
- browser ──https──► OOD's Apache :443 ── /auth ──► 127.0.0.1:KEYCLOAK_PORT  keycloak     (container, UID 949)
+ browser ──https──► OOD's Apache :443 ── /auth ──► MASTER_IP:KEYCLOAK_PORT  keycloak     (container, UID 949)
+                    (LOGIN_HOST)                    (firewalld: LOGIN_IP only)
                                                                   │ JDBC
                                                     127.0.0.1:KEYCLOAK_DB_PORT keycloak-db (Postgres, UID 949)
                                                                   │ data: KEYCLOAK_DATA/db (master's local disk)
@@ -55,12 +61,12 @@ Then open `https://$OOD_SERVERNAME`: the Keycloak login page comes first, then O
 |---|---|---|
 | systemd units (quadlets) | `/etc/containers/systemd/keycloak{,-db}.container` | login must work even when k8s has a problem; restarts on crash and at boot |
 | both containers run as `KEYCLOAK_USER` (949) | `User=` in the units | the images' own UIDs (1000, 999) are real people/accounts on this cluster |
-| 127.0.0.1 only, `Network=host` | `KC_HTTP_HOST`, Postgres `listen_addresses` | nothing reaches Keycloak except through Apache's HTTPS |
+| `MASTER_IP` + firewalld rich rule for `LOGIN_IP`; health, metrics and Postgres on 127.0.0.1; `Network=host` | `KC_HTTP_HOST`, `KC_HTTP_MANAGEMENT_HOST`, Postgres `listen_addresses`, `1-install.sh` step 6 | browsers only through Apache's HTTPS; only the login node (and master) reach the HTTP port |
 | image `keycloak:<ver>-rudra` | `image/Containerfile`, built by `1-install.sh` | pre-built for Postgres + `/auth`: starts in seconds, never rebuilds at runtime |
 | passwords | `KEYCLOAK_DATA/{admin,db,bootstrap}.pass`, `/etc/keycloak/*.env` (root, 0600) | never on a command line |
 | admin | `KEYCLOAK_ADMIN` in realm `master` | the first-start "temporary" admin is replaced and deleted (`kc.py admin`) |
 | `KC_CACHE=local` | runtime env | one server: without it Keycloak opens a cluster port (57800) on every interface |
-| sign-outs reach OOD (back-channel logout) | client `ood`: `backchannel.logout.url` = `https://$OOD_SERVERNAME/oidc?logout=backchannel` (`kc.py client`); `OOD_CERT` mounted as trusted | when Keycloak ends a session (`remove-user.sh`, "sign out other devices", admin console) it tells OOD's Apache, which drops its own login (else it lasts up to 8 h): the next page goes to the login, background calls get 401 (Model Hub then reloads) |
+| sign-outs reach OOD (back-channel logout) | client `ood`: `backchannel.logout.url` = `https://$OOD_SERVERNAME/oidc?logout=backchannel` (`kc.py client`); `OOD_CERT`, fetched from `LOGIN_HOST` to `/etc/pki/tls/certs/keycloak-trusts-ood.crt`, mounted as trusted | when Keycloak ends a session (`remove-user.sh`, "sign out other devices", admin console) it tells OOD's Apache, which drops its own login (else it lasts up to 8 h): the next page goes to the login, background calls get 401 (Model Hub then reloads) |
 | LDAP over ldaps, CA mounted | `Volume=$LDAP_CA:…/truststores/ldap-ca.crt`, `KC_TRUSTSTORE_PATHS` | 389 DS refuses password changes on a plain connection; the name `MASTER_HOST` matches LDAP's certificate |
 | LDAP account `cn=keycloak-passwords` | password in `KEYCLOAK_DATA/ldap.pass`; access rule `keycloak sets passwords` on `ou=People` | may write `userPassword`, nothing else: never the Directory Manager |
 | LDAP attribute mappers read-only | `kc.py realm` | the provider is writable (for passwords), so name/e-mail edits would otherwise go to LDAP (which refuses them) |
@@ -92,7 +98,9 @@ Then open `https://$OOD_SERVERNAME`: the Keycloak login page comes first, then O
 | Symptom | Cause | Fix |
 |---|---|---|
 | `1-install.sh`: `Port N is taken by another program` | something else listens there (master already runs a Postgres on 5432 and SonarQube on 9000) | pick free ports in `site.conf` (`KEYCLOAK_PORT`, `KEYCLOAK_MGMT_PORT`, `KEYCLOAK_DB_PORT`) |
-| `https://<host>/auth/...` gives 503 | Keycloak not running, or `KEYCLOAK_PORT` in Apache's config differs | `systemctl status keycloak`; rerun `../2-ood/setup-ood.sh` after changing ports |
+| `https://<host>/auth/...` gives 503 | Keycloak not running, `KEYCLOAK_PORT` in Apache's config differs, or master's firewalld doesn't let `LOGIN_IP` in | `systemctl status keycloak`; rerun `1-install.sh` (firewall rule) and `../2-ood/setup-ood.sh` on `LOGIN_HOST`; from there: `curl http://<MASTER_IP>:<KEYCLOAK_PORT>/auth/realms/master` |
+| right after rerunning `1-install.sh`: OOD login gives 503 | Keycloak now listens on `MASTER_IP`, Apache still proxies to the old `127.0.0.1` | rerun `../2-ood/setup-ood.sh` on `LOGIN_HOST` |
+| `1-install.sh`: `No OOD certificate ... on <LOGIN_HOST>` | OOD not installed there yet, or no root ssh master -> `LOGIN_HOST` | `../2-ood/setup-ood.sh` there first; `ssh root@<LOGIN_HOST> true` from master |
 | `/auth` gives 404 from OOD | Apache has no `/auth` proxy yet | rerun `../2-ood/setup-ood.sh` |
 | Keycloak page says "HTTPS required" | opened through plain http, or Apache doesn't send `X-Forwarded-Proto` | use `https://`; rerun `../2-ood/setup-ood.sh` |
 | links/redirects point to the wrong host | `KC_HOSTNAME` = `https://$OOD_SERVERNAME/auth`; the browser uses another name | set `OOD_SERVERNAME` to the name users type; rerun `../2-ood/setup-ood.sh` and `1-install.sh` |
@@ -102,7 +110,7 @@ Then open `https://$OOD_SERVERNAME`: the Keycloak login page comes first, then O
 | OOD: `Error: user ... does not exist` after logging in | the Keycloak user isn't a Linux user on master (e.g. a local Keycloak user other than `OOD_ADMIN`) | only LDAP users and `OOD_ADMIN` can use OOD |
 | OOD: login loop or `state` error | old cookies, or `OIDCCryptoPassphrase` changed | clear the site's cookies; the passphrase lives in `/etc/ood/oidc-crypto.passphrase` (keep it) |
 | OOD login broken and you need in now | | `OOD_AUTH=ldap` in `site.conf`, `sudo bash ../2-ood/setup-ood.sh` |
-| a removed / signed-out user's OOD tab keeps working | Keycloak can't reach `https://$OOD_SERVERNAME/oidc` (certificate not trusted, or the name doesn't resolve on master) | `journalctl -u keycloak \| grep -i backchannel`; after renewing OOD's certificate rerun `1-install.sh` + restart Keycloak |
+| a removed / signed-out user's OOD tab keeps working | Keycloak can't reach `https://$OOD_SERVERNAME/oidc` (certificate not trusted, or the name doesn't resolve to `LOGIN_HOST` on master; `localhost` only works while they are one machine) | `journalctl -u keycloak \| grep -i backchannel`; after renewing OOD's certificate rerun `1-install.sh` (fetches it, restarts Keycloak when it changed) |
 | `2-realm.sh`: `Keycloak doesn't trust LDAP's CA yet` | Keycloak was installed before passwords were writable | rerun `1-install.sh` (mounts the CA, restarts Keycloak), then `2-realm.sh` |
 | new password refused / "Could not modify attribute" after the first login | Keycloak can't write to LDAP: account, access rule or ldaps | rerun `2-realm.sh` (recreates them and checks); `journalctl -u keycloak \| grep -i ldap` |
 | `remove-user.sh` / admin console: deleting a user fails in Keycloak | Keycloak passes a delete on to LDAP, which its account may not do | delete in LDAP first (`remove-user.sh` does it in that order) |

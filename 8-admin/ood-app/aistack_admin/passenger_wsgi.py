@@ -1,14 +1,16 @@
 """Admin page backend: an OOD Passenger app that runs AS the logged-in user, which must be OOD_ADMIN.
 
-It does nothing itself: every read and change is one call of the root helper (../aistack-admin.py, installed as
-ADMIN_HELPER) through `sudo -n`, which checks the caller and every argument again and logs each change. Passwords go
-to it on stdin. State-changing requests must carry X-Requested-With (a custom header a cross-site form can't send).
-site.json (written by 2-install-ood-app.sh): {"admin": OOD_ADMIN, "helper": ADMIN_HELPER, "sudo": ["sudo", "-n"]}.
+It does nothing itself: every read and change is one call of the root helper on master (../aistack-admin.py, installed
+as ADMIN_HELPER) over ssh with the page's own key (ADMIN_KEY): master's root runs nothing but the helper for that key,
+which checks every argument again and logs each change. Each argument is shlex-quoted (ssh sends one command line).
+Passwords go to it on stdin. State-changing requests must carry X-Requested-With (a custom header a cross-site form
+can't send). site.json (written by 2-install-ood-app.sh): {"admin": OOD_ADMIN, "ssh": [ssh, options..., root@MASTER_HOST]}.
 """
 import json
 import mimetypes
 import os
 import pwd
+import shlex
 import subprocess
 import urllib.parse
 
@@ -26,7 +28,7 @@ class Fail(Exception):
 
 def helper(action, *args, password=None):
     """One helper call -> its "data" (reads) or {"output": ...} (changes). Its own refusals become a 400."""
-    r = subprocess.run([*SITE.get("sudo", ["sudo", "-n"]), SITE["helper"], action, *args], capture_output=True, text=True,
+    r = subprocess.run([*SITE["ssh"], shlex.join([action, *args])], capture_output=True, text=True,
                        input=(password + "\n") if password is not None else "", timeout=900)
     try:
         res = json.loads(r.stdout.strip().splitlines()[-1])

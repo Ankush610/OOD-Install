@@ -1,5 +1,5 @@
 // Admin page (Bootstrap 5.3, Model Hub's look). Talks only to this app's backend (passenger_wsgi.py), which runs every
-// read and change through the root helper (sudo aistack-admin):
+// read and change through the root helper (aistack-admin on master, over ssh):
 //   GET  api/me | api/jobs | api/endpoints | api/users | api/teams | api/log
 //   POST api/users {name,password} | api/users/<u>/remove {delete_home,delete_mlflow} | api/users/<u>/password {password}
 //        api/users/<u>/limits {gpus,max_hours}|{reset} | api/teams {name} | api/teams/<t>/members {add,remove}

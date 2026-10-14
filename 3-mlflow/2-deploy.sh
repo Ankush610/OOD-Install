@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Deploy the shared MLflow pod on k8s from mlflow.yaml + ../site.conf. Safe to rerun: data and users survive.
-# Run on master after 1-build-image.sh: sudo bash 2-deploy.sh
+# Run on master after 1-build-image.sh: sudo bash 2-deploy.sh     Needs root ssh to LOGIN_HOST (proxy secret for OOD).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/../site.conf"
 [ "$(id -u)" = 0 ] || { echo "Run with sudo (creates $MLFLOW_USER, owns $MLFLOW_DATA)." >&2; exit 1; }
+[ "$(hostname -s)" = "$MASTER_HOST" ] || { echo "Run this on $MASTER_HOST." >&2; exit 1; }
+on() {  # on <node> <command>: as root, here or over ssh (stdin goes along)
+  if [ "$1" = "$(hostname -s)" ]; then bash -c "$2"; else ssh -o ConnectTimeout=5 -o BatchMode=yes "root@$1" "$2"; fi
+}
 export KUBECONFIG=${KUBECONFIG:-/etc/kubernetes/admin.conf}   # kubeadm's admin config on the control plane
 
 echo "== 1. Checks"
@@ -46,6 +50,13 @@ EOF
 # single sign-on: OOD's Apache sends this with the logged-in user (2-ood/setup-ood.sh, OOD_AUTH=keycloak)
 [ -s "$MLFLOW_DATA/proxy.secret" ] || (umask 077; openssl rand -hex 32 | tr -d '\n' > "$MLFLOW_DATA/proxy.secret")
 chown "$MLFLOW_UID:$MLFLOW_UID" "$MLFLOW_DATA/admin.pass" "$MLFLOW_DATA/basic_auth.ini" "$MLFLOW_DATA/proxy.secret"
+# OOD's Apache on LOGIN_HOST needs it, but can't read MLFLOW_DATA (mode 700; NFS maps its root to nobody):
+# master copies it there (stdin, never a command line). The login node never gets root on master.
+if on "$LOGIN_HOST" "install -d -m 755 ${MLFLOW_PROXY_SECRET%/*} && umask 077 && cat > $MLFLOW_PROXY_SECRET && chmod 600 $MLFLOW_PROXY_SECRET" < "$MLFLOW_DATA/proxy.secret"; then
+  echo "proxy secret -> $LOGIN_HOST:$MLFLOW_PROXY_SECRET (root only)"
+else
+  echo "WARNING: could not copy the proxy secret to $LOGIN_HOST: rerun when it's reachable (MLflow SSO needs it)" >&2
+fi
 
 echo "== 4. Apply (namespace mlflow, pinned to $MASTER_HOST)"
 export MASTER_HOST MASTER_IP MLFLOW_IMAGE MLFLOW_PORT MLFLOW_PREFIX MLFLOW_DATA MLFLOW_UID LDAP_URI LDAP_BASE LDAP_CA
@@ -66,6 +77,6 @@ cat <<EOF
 Done. Tracking URI: $MLFLOW_URI
 Next: sudo bash 3-sync-tokens.sh
 EOF
-if [ "$OOD_AUTH" = keycloak ] && ! grep -q X-MLflow-Proxy-Secret /etc/ood/config/ood_portal.yml 2>/dev/null; then
-  echo "OOD_AUTH=keycloak: also rerun ../2-ood/setup-ood.sh, so the web UI opens through OOD without a second password."
+if [ "$OOD_AUTH" = keycloak ] && ! on "$LOGIN_HOST" "grep -q X-MLflow-Proxy-Secret /etc/ood/config/ood_portal.yml" 2>/dev/null; then
+  echo "OOD_AUTH=keycloak: also rerun ../2-ood/setup-ood.sh on $LOGIN_HOST, so the web UI opens through OOD without a second password."
 fi

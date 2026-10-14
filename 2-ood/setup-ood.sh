@@ -1,33 +1,35 @@
 #!/usr/bin/env bash
-# Install Open OnDemand on master. Self-signed certificate. Web login, chosen by OOD_AUTH in site.conf:
+# Install Open OnDemand on LOGIN_HOST. Self-signed certificate. Web login, chosen by OOD_AUTH in site.conf:
 #   ldap      Apache asks for the LDAP password itself (same as SSH); htpasswd login for OOD_ADMIN when LDAP is down
 #   keycloak  Apache sends the browser to Keycloak (../6-keycloak) and trusts its login (OpenID Connect,
 #             mod_auth_openidc): one login for OOD, MLflow, Model Hub. OOD_ADMIN is a local Keycloak user
 # Switching back and forth = change OOD_AUTH, rerun this script.
-# Run on master after ../1-ldap (and ../6-keycloak for keycloak): sudo bash setup-ood.sh
-#   (asks once for OOD_ADMIN's web password)
+# Run on LOGIN_HOST after ../1-ldap (and ../6-keycloak on master for keycloak): sudo bash setup-ood.sh
+#   (ldap: asks once for OOD_ADMIN's web password)
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 source "$HERE/../site.conf"
 [ "$(id -u)" = 0 ] || { echo "Run with sudo." >&2; exit 1; }
+[ "$(hostname -s)" = "$LOGIN_HOST" ] || { echo "Run this on $LOGIN_HOST (LOGIN_HOST)." >&2; exit 1; }
+export LDAPTLS_CACERT=$LDAP_CA
 
 CERT=$OOD_CERT
 KEY=/etc/pki/tls/private/ood.key
 PORTAL=/etc/ood/config/ood_portal.yml
 HTPASSWD=/etc/ood/htpasswd
 
-OIDC_SECRET=/etc/ood/oidc-client.secret
 OIDC_PASSPHRASE=/etc/ood/oidc-crypto.passphrase
-KC_INTERNAL=http://127.0.0.1:$KEYCLOAK_PORT$KEYCLOAK_PATH
 
-ldapsearch -x -LLL -H ldap://localhost -b "$LDAP_BASE" -s base dn >/dev/null 2>&1 ||
-  { echo "No LDAP on localhost ($LDAP_BASE). Run ../1-ldap/1-server.sh first." >&2; exit 1; }
+ldapsearch -x -LLL -H "$LDAP_URI" -b "$LDAP_BASE" -s base dn >/dev/null 2>&1 ||
+  { echo "No answer from $LDAP_URI ($LDAP_BASE). Run ../1-ldap/1-server.sh on $MASTER_HOST, 2-client.sh here." >&2; exit 1; }
 case $OOD_AUTH in
   ldap) ;;
   keycloak)
-    curl -sf -o /dev/null "$KC_INTERNAL/realms/$KEYCLOAK_REALM/.well-known/openid-configuration" ||
-      { echo "OOD_AUTH=keycloak, but realm $KEYCLOAK_REALM doesn't answer: run ../6-keycloak/1-install.sh and 2-realm.sh." >&2; exit 1; } ;;
+    curl -sf -o /dev/null "$KEYCLOAK_URL/realms/$KEYCLOAK_REALM/.well-known/openid-configuration" ||
+      { echo "OOD_AUTH=keycloak, but realm $KEYCLOAK_REALM doesn't answer at $KEYCLOAK_URL: run ../6-keycloak/1-install.sh and 2-realm.sh on $MASTER_HOST." >&2; exit 1; }
+    [ -s "$OOD_OIDC_SECRET" ] ||
+      { echo "No $OOD_OIDC_SECRET: run ../6-keycloak/2-realm.sh on $MASTER_HOST (it makes client ood and copies the secret here)." >&2; exit 1; } ;;
   *) echo "OOD_AUTH must be ldap or keycloak (site.conf), not '$OOD_AUTH'." >&2; exit 1 ;;
 esac
 
@@ -56,33 +58,28 @@ id "$OOD_ADMIN" >/dev/null
 if [ "$OOD_AUTH" = ldap ]; then
   [ -f "$HTPASSWD" ] || htpasswd -c "$HTPASSWD" "$OOD_ADMIN"
 else
-  export KC_URL=$KC_INTERNAL KEYCLOAK_ADMIN KEYCLOAK_DATA KEYCLOAK_REALM
-  # not in LDAP, so Keycloak keeps its password itself; asked once, only when the user doesn't exist yet
-  if python3 "$HERE/../6-keycloak/kc.py" local-user "$OOD_ADMIN" </dev/null 2>/dev/null | grep -q exists; then
-    echo "${OOD_ADMIN}: already a local Keycloak user"
-  else
-    read -rsp "New Keycloak password for ${OOD_ADMIN} (8+ characters): " pw; echo
-    printf '%s' "$pw" | python3 "$HERE/../6-keycloak/kc.py" local-user "$OOD_ADMIN"; unset pw
-  fi
+  echo "keycloak: ${OOD_ADMIN} is a local Keycloak user (made by ../6-keycloak/2-realm.sh on $MASTER_HOST)"
 fi
 
 echo "== 6. Portal config"
 [ -f "$PORTAL.orig" ] || cp "$PORTAL" "$PORTAL.orig"
 # ldap BEFORE file: Apache stops at the first provider that knows the user, so LDAP decides for
 # everyone in it; only accounts LDAP doesn't know (OOD_ADMIN) fall through to htpasswd.
-# ldap://localhost: Apache and LDAP are both on master, so the password never leaves the machine.
+# ldaps to MASTER_HOST (the certificate's name): the password crosses the network encrypted. Apache trusts
+# LDAP_CA through LDAPTrustedGlobalCert, a server-wide directive, so it gets its own conf.d file.
+printf '# Written by OOD-Install/2-ood/setup-ood.sh: AuthLDAPURL is ldaps to %s\nLDAPTrustedGlobalCert CA_BASE64 "%s"\n' \
+  "$MASTER_HOST" "$LDAP_CA" > /etc/httpd/conf.d/ood-ldap-ca.conf
 if [ "$OOD_AUTH" = ldap ]; then
   auth="auth:
   - 'AuthType Basic'
   - 'AuthName \"${PORTAL_TITLE}\"'
   - 'AuthBasicProvider ldap file'
-  - 'AuthLDAPURL \"ldap://localhost/ou=People,${LDAP_BASE}?uid?one\"'
+  - 'AuthLDAPURL \"${LDAP_URI}/ou=People,${LDAP_BASE}?uid?one\"'
   - 'AuthUserFile \"${HTPASSWD}\"'
   - 'Require valid-user'"
 else
-  python3 "$HERE/../6-keycloak/kc.py" client ood "https://${OOD_SERVERNAME}" "$OIDC_SECRET"
   [ -s "$OIDC_PASSPHRASE" ] || (umask 077; openssl rand -hex 32 | tr -d '\n' > "$OIDC_PASSPHRASE")
-  # Apache talks to Keycloak on 127.0.0.1 (no certificate problem); Keycloak still names its public address
+  # Apache talks to Keycloak on KEYCLOAK_URL (master, plain HTTP); Keycloak still names its public address
   # (https://$OOD_SERVERNAME$KEYCLOAK_PATH) as the issuer and the browser login page.
   # preferred_username = the LDAP uid = the Linux user OOD runs the session as (no user map needed).
   # logout: /oidc?logout= ends the Keycloak session too, then comes back to OOD.
@@ -90,9 +87,9 @@ else
   - 'AuthType openid-connect'
   - 'Require valid-user'
 oidc_uri: '/oidc'
-oidc_provider_metadata_url: '${KC_INTERNAL}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration'
+oidc_provider_metadata_url: '${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration'
 oidc_client_id: 'ood'
-oidc_client_secret: '$(cat "$OIDC_SECRET")'
+oidc_client_secret: '$(cat "$OOD_OIDC_SECRET")'
 oidc_crypto_passphrase: '$(cat "$OIDC_PASSPHRASE")'
 oidc_remote_user_claim: 'preferred_username'
 oidc_scope: 'openid profile'
@@ -111,13 +108,13 @@ mlflow_sso=""
 if [ "$OOD_AUTH" = keycloak ]; then
   if [[ $MLFLOW_PREFIX != /node/* ]]; then
     echo "MLflow SSO skipped: MLFLOW_PREFIX ($MLFLOW_PREFIX) is not under /node/, so OOD doesn't proxy MLflow."
-  elif [ -s "$MLFLOW_DATA/proxy.secret" ]; then
+  elif [ -s "$MLFLOW_PROXY_SECRET" ]; then
     mlflow_sso="
   - '<Location \"${MLFLOW_PREFIX}\">'
-  - '  RequestHeader set X-MLflow-Proxy-Secret \"$(cat "$MLFLOW_DATA/proxy.secret")\"'
+  - '  RequestHeader set X-MLflow-Proxy-Secret \"$(cat "$MLFLOW_PROXY_SECRET")\"'
   - '</Location>'"
   else
-    echo "MLflow SSO skipped: no $MLFLOW_DATA/proxy.secret yet. Run ../3-mlflow/2-deploy.sh, then rerun this script."
+    echo "MLflow SSO skipped: no $MLFLOW_PROXY_SECRET yet. Run ../3-mlflow/2-deploy.sh on $MASTER_HOST (it copies it here), then rerun this script."
   fi
 fi
 (umask 077; cat > "$PORTAL" <<EOF
@@ -130,12 +127,12 @@ ${auth}
 # proxy for interactive apps
 node_uri: '/node'
 rnode_uri: '/rnode'
-# Keycloak (6-keycloak) listens on 127.0.0.1 only; browsers reach it here, with OOD's certificate on port 443.
+# Keycloak (6-keycloak) runs on master (KEYCLOAK_URL, only this node let in); browsers reach it here, with OOD's certificate on port 443.
 # No login on this path: Keycloak IS the login page. Until 6-keycloak is installed it just answers 503.
 custom_vhost_directives:
   - '<Location "${KEYCLOAK_PATH}">'
-  - '  ProxyPass "http://127.0.0.1:${KEYCLOAK_PORT}${KEYCLOAK_PATH}"'
-  - '  ProxyPassReverse "http://127.0.0.1:${KEYCLOAK_PORT}${KEYCLOAK_PATH}"'
+  - '  ProxyPass "${KEYCLOAK_URL}"'
+  - '  ProxyPassReverse "${KEYCLOAK_URL}"'
   - '  RequestHeader set X-Forwarded-Proto "https"'
   - '  RequestHeader set X-Forwarded-Port "443"'
   - '</Location>'${mlflow_sso}
@@ -152,7 +149,7 @@ v2:
   metadata:
     title: "${CLUSTER_TITLE}"
   login:
-    host: "${MASTER_HOST}"
+    host: "${LOGIN_HOST}"
   job:
     adapter: "slurm"
     bin: "${SLURM_BIN}"
@@ -246,5 +243,5 @@ cat <<EOF
 
 Done (OOD_AUTH=${OOD_AUTH}). Test in the browser: https://${OOD_SERVERNAME}  -> log in with an LDAP user's password
   (keycloak: a Keycloak login page first; then OOD opens; "Log Out" in OOD logs out of Keycloak too).
-From the laptop: tunnel local port 443 to ${MASTER_HOST}:443, then open https://${OOD_SERVERNAME}
+From the laptop: tunnel local port 443 to ${LOGIN_HOST}:443, then open https://${OOD_SERVERNAME}
 EOF

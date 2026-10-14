@@ -4,7 +4,7 @@ ONE shared MLflow server (tracking + model registry) for every user, running as 
 
 See [WORKFLOW.md](WORKFLOW.md) for diagrams: the big picture, adding a user, a training run, the model registry, and who sees what.
 
-## Run (on master, after ../1-ldap and ../2-ood)
+## Run (on master, after ../1-ldap and ../2-ood; `4-install-ood-app.sh` on `LOGIN_HOST`)
 
 ```bash
 bash      1-build-image.sh        # image/ -> MLFLOW_IMAGE, pushed to REGISTRY (no root)
@@ -62,7 +62,8 @@ Jobs and scripts are the same either way: the token in `~/.mlflow/credentials` o
 |---|---|---|
 | `1-build-image.sh`: `THESE PACKAGES DO NOT MATCH THE HASHES` | PyPI dropped the connection mid-download | rerun |
 | Keycloak on, but **Open MLflow** still asks for a password | the OOD page was installed before the switch, or Apache has no MLflow secret yet | `sudo bash 2-deploy.sh`, `sudo bash ../2-ood/setup-ood.sh`, `sudo bash 4-install-ood-app.sh`, then Restart Web Server |
-| through OOD: MLflow answers 401 | `proxy.secret` changed after `setup-ood.sh` ran (Apache sends the old one), or the pod runs the old image | rerun `../2-ood/setup-ood.sh`; check the pod's image is `MLFLOW_IMAGE` (`-sso`) |
+| through OOD: MLflow answers 401 | `proxy.secret` changed after `setup-ood.sh` ran (Apache sends the old one), or the pod runs the old image | rerun `2-deploy.sh` (copies it to `LOGIN_HOST:MLFLOW_PROXY_SECRET`), then `../2-ood/setup-ood.sh` on `LOGIN_HOST`; check the pod's image is `MLFLOW_IMAGE` (`-sso`) |
+| `setup-ood.sh`: `MLflow SSO skipped: no /etc/ood/mlflow-proxy.secret` / `2-deploy.sh`: `could not copy the proxy secret` | the login node can't read `MLFLOW_DATA` (mode 700, NFS root_squash), so master copies it over root ssh, which failed | fix root ssh master -> `LOGIN_HOST`, rerun `2-deploy.sh`, then `setup-ood.sh` there |
 | `2-deploy.sh`: `is not in the registry` | image not built/pushed, or another tag in `site.conf` | `bash 1-build-image.sh` |
 | `2-deploy.sh`: `UID <n> already belongs to '<x>'` | `MLFLOW_UID` is taken on master | pick a free UID below `MIN_UID` in `site.conf` |
 | `2-deploy.sh`: rollout timed out, event `failed calling webhook "pods.slinky.slurm.net" ... connection refused` | slurm-bridge's admission webhook is down, and it blocks new pods in every namespace except `kube-system`/`slurm` | its pods need a toleration for `slinky.slurm.net/managed-node`: `kubectl -n slurm patch deploy …` (lost on `helm upgrade`: put it in the chart values) |

@@ -52,7 +52,7 @@ echo "last uid handed out: $(cat "$LDAP_LAST_UID_FILE")"
 stop_all() {  # by UID, so it also works once the name is gone from LDAP
   "$SLURM_BIN/scancel" -u "$ID" && echo "Slurm jobs cancelled" || echo "scancel failed (Slurm down?)" >&2
   # the OOD session's nginx master runs as root (only its workers run as the user): stop it by its config file
-  pkill -f "/puns/$U\.conf\$" && echo "OOD session stopped" || true
+  on "$LOGIN_HOST" "pkill -f '/puns/$U\.conf\$' && echo 'OOD session stopped'; true"
   for n in $(printf '%s\n' $LOGIN_NODES $COMPUTE_NODES | sort -u); do
     on "$n" "pkill -KILL -U $ID; true"
   done
@@ -149,7 +149,7 @@ fi
 
 kc() {  # kc.py <command> <user>, if Keycloak is installed
   if [ -f "$KEYCLOAK_DATA/admin.pass" ]; then
-    KC_URL=http://127.0.0.1:$KEYCLOAK_PORT$KEYCLOAK_PATH KEYCLOAK_ADMIN=$KEYCLOAK_ADMIN KEYCLOAK_DATA=$KEYCLOAK_DATA \
+    KC_URL=$KEYCLOAK_URL KEYCLOAK_ADMIN=$KEYCLOAK_ADMIN KEYCLOAK_DATA=$KEYCLOAK_DATA \
       KEYCLOAK_REALM=$KEYCLOAK_REALM python3 "$HERE/../6-keycloak/kc.py" "$@"
   else
     echo "Keycloak not installed, skipped."

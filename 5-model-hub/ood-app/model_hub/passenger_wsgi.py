@@ -549,9 +549,10 @@ def share_of(ann):
 
 def teams():
     """All teams (../1-ldap/group.sh): groupOfNames that aren't someone's personal posixGroup."""
-    out = subprocess.run(["ldapsearch", "-x", "-LLL", "-o", "ldif-wrap=no", "-H", "ldap://localhost",
+    out = subprocess.run(["ldapsearch", "-x", "-LLL", "-o", "ldif-wrap=no", "-H", SITE["ldap_uri"],   # ldaps to master
                           "-b", f"ou=Groups,{SITE['ldap_base']}", "(&(objectClass=groupOfNames)(!(objectClass=posixGroup)))",
-                          "cn"], capture_output=True, text=True, timeout=10).stdout
+                          "cn"], capture_output=True, text=True, timeout=10,
+                         env={**os.environ, "LDAPTLS_CACERT": SITE["ldap_ca"]}).stdout
     return sorted(l[4:] for l in out.splitlines() if l.startswith("cn: "))
 
 

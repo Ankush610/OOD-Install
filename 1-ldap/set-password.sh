@@ -20,7 +20,7 @@ IFS= read -r PW || true
 LDAPTLS_CACERT="$LDAP_CA" ldappasswd -x -H "$LDAP_URI" -D "$LDAP_DM" -y "$LDAP_DM_PASS_FILE" -T <(printf %s "$PW") "$DN"
 echo "password of $U changed (SSH, Slurm, OOD, MLflow)"
 if [ -f "$KEYCLOAK_DATA/admin.pass" ]; then
-  KC_URL=http://127.0.0.1:$KEYCLOAK_PORT$KEYCLOAK_PATH KEYCLOAK_ADMIN=$KEYCLOAK_ADMIN KEYCLOAK_DATA=$KEYCLOAK_DATA \
+  KC_URL=$KEYCLOAK_URL KEYCLOAK_ADMIN=$KEYCLOAK_ADMIN KEYCLOAK_DATA=$KEYCLOAK_DATA \
     KEYCLOAK_REALM=$KEYCLOAK_REALM python3 "$HERE/../6-keycloak/kc.py" must-change "$U"
 else
   echo "Keycloak not installed: it stays their password until they change it (passwd)."

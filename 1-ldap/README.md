@@ -33,7 +33,7 @@ One menu (whiptail) for everything below. Each action runs the script it names, 
 ```bash
 sudo bash 1-server.sh                        # on master: 389 DS, the tree, access rules, CA -> LDAP_CA
 sudo bash import-local-users.sh --dry-run    # optional, see below
-sudo bash 2-client.sh                        # on master, then as root on every compute node
+sudo bash 2-client.sh                        # on master, then as root on LOGIN_HOST and every compute node
 sudo bash add-user.sh <name>                 # on master: each new person
 sudo bash remove-user.sh <name> [--delete-home] [--delete-mlflow]   # on master: someone leaves
 sudo bash group.sh create nlp; sudo bash group.sh add nlp bob carol   # teams (Model Hub sharing); list / remove / delete

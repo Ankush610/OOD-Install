@@ -1,13 +1,16 @@
 # 2-ood
 
-Installs Open OnDemand 4.2 on master (AlmaLinux 9), with a self-signed certificate. Web login uses the **LDAP password**, the same as SSH. Needs `../1-ldap/1-server.sh` first.
+Installs Open OnDemand 4.2 on the login node `LOGIN_HOST` (AlmaLinux 9; `master` itself on this cluster), with a self-signed certificate. Web login uses the **LDAP password**, the same as SSH. Needs `../1-ldap/1-server.sh` (master) and `2-client.sh` (here) first.
 Official guide: https://osc.github.io/ood-documentation/latest/installation/install-software.html
 
 ## Run
 
 ```bash
-sudo bash setup-ood.sh     # asks once for OOD_ADMIN's local web password
+sudo bash setup-ood.sh     # on LOGIN_HOST; asks once for OOD_ADMIN's local web password
 ```
+With `OOD_AUTH=keycloak` it needs from master: `../6-keycloak/2-realm.sh` (copies the client secret to `OOD_OIDC_SECRET`)
+and, for MLflow single sign-on, `../3-mlflow/2-deploy.sh` (copies `MLFLOW_PROXY_SECRET`). The login node never reads
+master's files itself.
 
 It uses these values from `../site.conf`:
 
@@ -32,9 +35,9 @@ It uses these values from `../site.conf`:
 **Login:**
 ```yaml
 - 'AuthBasicProvider ldap file'
-- 'AuthLDAPURL "ldap://localhost/ou=People,<LDAP_BASE>?uid?one"'
+- 'AuthLDAPURL "ldaps://<MASTER_HOST>/ou=People,<LDAP_BASE>?uid?one"'
 ```
-LDAP is asked **first**. Apache stops at the first source that knows the user, so LDAP decides for everyone in it, and only accounts LDAP doesn't know (`OOD_ADMIN`) fall through to htpasswd. `ldap://localhost` is safe without TLS, because Apache and LDAP are both on master, so the password never leaves the machine.
+LDAP is asked **first**. Apache stops at the first source that knows the user, so LDAP decides for everyone in it, and only accounts LDAP doesn't know (`OOD_ADMIN`) fall through to htpasswd. **ldaps**, because Apache (login node) and LDAP (master) may be different machines: the password crosses the network encrypted. Apache trusts `LDAP_CA` through `/etc/httpd/conf.d/ood-ldap-ca.conf` (`LDAPTrustedGlobalCert`, a server-wide directive, so not in `ood_portal.yml`).
 
 **Success looks like:** `/` returns **302**, `/pun/sys/dashboard` returns **401** without a login and **200** with an LDAP user's password (`curl -sk -u <user> …`). In the browser, **Clusters -> Shell** and **Jobs -> Active Jobs** load.
 
@@ -44,7 +47,10 @@ LDAP is asked **first**. Apache stops at the first source that knows the user, s
 |---|---|---|
 | `groupadd: GID '76' already exists`, `cyrus-sasl` failed | another group owns GID 76 | the script creates `saslauth` first. By hand: `groupadd -r saslauth; dnf install -y cyrus-sasl` |
 | release RPM **404** | wrong version URL | take the current URL from the official guide and set `OOD_VERSION` |
-| login refuses the right password | the browser resends an old cached login (Basic auth has no logout), or the user isn't in LDAP | close **all** browser windows; `curl -sk -o /dev/null -w '%{http_code}' -u <user> https://localhost/pun/sys/dashboard`; `ldapsearch -x -H ldap://localhost -b ou=People,<LDAP_BASE> uid=<user>` |
+| login refuses the right password | the browser resends an old cached login (Basic auth has no logout), or the user isn't in LDAP | close **all** browser windows; `curl -sk -o /dev/null -w '%{http_code}' -u <user> https://localhost/pun/sys/dashboard`; `LDAPTLS_CACERT=<LDAP_CA> ldapsearch -x -H ldaps://<MASTER_HOST> -b ou=People,<LDAP_BASE> uid=<user>` |
+| every LDAP login refused, Apache error log: `LDAP: ... Can't contact LDAP server` / certificate errors | the login node can't reach master's 636, or Apache doesn't trust `LDAP_CA` | `LDAPTLS_CACERT=<LDAP_CA> ldapsearch -x -H ldaps://<MASTER_HOST> -b <LDAP_BASE> -s base`; open 636 on master for `LOGIN_IP`; rerun `setup-ood.sh` (writes `conf.d/ood-ldap-ca.conf`) |
+| `setup-ood.sh`: `Run this on <LOGIN_HOST>` | OOD lives on the login node | run it there, or set `LOGIN_HOST` in `site.conf` |
+| `setup-ood.sh` (keycloak): `No /etc/ood/oidc-client.secret` or `realm ... doesn't answer at http://<MASTER_IP>:<port>` | `2-realm.sh` not run on master since the split, or master's firewalld doesn't let `LOGIN_IP` in | on master: `sudo bash ../6-keycloak/1-install.sh` (firewall rule) and `2-realm.sh` (copies the secret); `curl http://<MASTER_IP>:<KEYCLOAK_PORT>/auth/realms/master` from here |
 | only one user per browser, even in private windows | Basic auth keeps one login per site until the browser fully closes | a second browser or profile. Real fix: single sign-on (Keycloak/OIDC) |
 | browser "site can't be reached" | tunnel on a port other than 443 | tunnel with `-L 443:localhost:443`, using `sudo` on the laptop |
 | `resolve_ctls_from_dns_srv ... Unknown host` | OOD doesn't see `SLURM_CONF` | set `SLURM_CONF` in `site.conf`, rerun, Restart Web Server |
