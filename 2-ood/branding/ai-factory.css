@@ -78,6 +78,7 @@ body:has(.navbar-brand-logo[aria-current="page"]) {
 .ai-tools .icon-purple { background: #8b5cf6; }
 .ai-tools .icon-yellow { background: #e0a800; }
 .ai-tools .icon-green  { background: #28a745; }
+.ai-tools .icon-coral  { background: #ff6b6b; }
 
 /* the tool's line, as a chat bubble (Model Hub's playground) */
 .ai-tools .thought {

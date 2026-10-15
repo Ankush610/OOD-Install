@@ -1,0 +1,82 @@
+# Prometheus rules, copied to /etc/prometheus/rules.yml by 1-install.sh.
+# Recording rules = named queries: apps (OOD, Model Hub, ...) ask for these names instead of writing their own PromQL,
+# so a change in how something is measured happens here once. Every series has a `node` label (the hostname).
+# Alerts: visible at PROM_URL/alerts and /api/v1/alerts. Nothing sends them anywhere yet (no Alertmanager).
+groups:
+  - name: node                                # node_exporter, every node
+    rules:
+      - record: node:cpu_used:ratio
+        expr: 1 - avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m]))
+      - record: node:mem_used:ratio
+        expr: 1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes
+      - record: node:disk_used:ratio          # the root filesystem
+        expr: 1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}
+      - record: node:load1_per_cpu:ratio
+        expr: node_load1 / on (node) count by (node) (node_cpu_seconds_total{mode="idle"})
+
+  - name: gpu                                 # gpu-metrics.sh (nvidia-smi), one series per GPU: node, gpu, name, uuid
+    rules:
+      - record: gpu:util:ratio
+        expr: gpu_utilization_ratio
+      - record: gpu:mem_used:ratio
+        expr: gpu_memory_used_bytes / gpu_memory_total_bytes
+      - record: gpu:mem_used:bytes
+        expr: gpu_memory_used_bytes
+      - record: gpu:temp:celsius
+        expr: gpu_temperature_celsius
+
+  - name: slurm                               # slurm-metrics.py, one series per node: node (hostname), slurm_node
+    rules:
+      - record: slurm:node_cpus_alloc:ratio   # share of the CPUs jobs can get that are reserved now
+        expr: slurm_node_cpus_alloc / (slurm_node_cpus > 0)
+      - record: slurm:node_mem_alloc:ratio
+        expr: slurm_node_memory_alloc_bytes / (slurm_node_memory_bytes > 0)
+      - record: slurm:node_gpus_free          # GPUs a new job/endpoint could get on this node now (0 if it's down)
+        expr: (slurm_node_gpus - slurm_node_gpus_alloc) * slurm_node_available
+      - record: slurm:gpus_free               # the whole cluster
+        expr: sum(slurm:node_gpus_free)
+
+  - name: alerts
+    rules:
+      - alert: TargetDown                     # a node is off / unreachable, or its node_exporter stopped
+        expr: up == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.job }} on {{ $labels.node }} has not answered for 5 minutes"
+      - alert: SlurmNodeUnavailable           # down, drained, not responding...: takes no new jobs
+        expr: (slurm_node_available == 0) * on (slurm_node) group_left (state, reason) slurm_node_info
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Slurm node {{ $labels.slurm_node }} is {{ $labels.state }}: {{ $labels.reason }}"
+      - alert: CollectorFailing               # nvidia-smi or scontrol/squeue failed (journalctl -u gpu-metrics / slurm-metrics)
+        expr: gpu_collector_ok == 0 or slurm_collector_ok == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.__name__ }} on {{ $labels.node }}: the collector fails"
+      - alert: CollectorStale                 # its timer stopped: numbers would be old
+        expr: time() - node_textfile_mtime_seconds > 120
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.file }} on {{ $labels.node }} not updated for {{ $value | humanizeDuration }}"
+      - alert: DiskAlmostFull
+        expr: node:disk_used:ratio > 0.9
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.node }}: / is {{ $value | humanizePercentage }} full"
+      - alert: MemoryAlmostFull
+        expr: node:mem_used:ratio > 0.95
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.node }}: {{ $value | humanizePercentage }} of RAM in use"
+      - alert: GpuHot
+        expr: gpu:temp:celsius > 85
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.node }} GPU {{ $labels.gpu }} ({{ $labels.name }}) at {{ $value }} °C"
