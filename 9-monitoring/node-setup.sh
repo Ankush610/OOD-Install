@@ -3,12 +3,12 @@
 # 1-install.sh runs it as root on every node (ssh ... bash -s < node-setup.sh), with these variables:
 #   SRC         MONITOR_ROOT (shared /home): node_exporter release + collectors/ are copied from here
 #   NODE_REL    node_exporter release folder name         PORT       node_exporter's port
-#   MASTER_IP   the only address let in to PORT
+#   MASTER_IP   the only address let in to PORT          MONITOR_UNITS  regex of systemd units to report (site.conf)
 #   GPU_NODE=1  Slurm lists GPUs here -> gpu-metrics every 15 s     GPU_TYPES  e.g. "a30" ("" = every GPU)
 #   SLURM=1     this is master -> slurm-metrics every 30 s           SLURM_BIN, SLURM_CONF  for scontrol/squeue
 # Prints one line about this node. Safe to rerun: changes only what differs.
 set -euo pipefail
-: "${SRC:?}" "${NODE_REL:?}" "${PORT:?}" "${MASTER_IP:?}"
+: "${SRC:?}" "${NODE_REL:?}" "${PORT:?}" "${MASTER_IP:?}" "${MONITOR_UNITS:?}"
 GPU_NODE=${GPU_NODE:-} GPU_TYPES=${GPU_TYPES:-} SLURM=${SLURM:-}
 LIB=/usr/local/libexec/aistack-monitoring
 TXT=/var/lib/node_exporter/textfile        # node's own disk: a hung NFS must not stall the exporter
@@ -71,6 +71,11 @@ EOF
   systemctl start "$name.service" || true     # a failure is in the metrics (…_collector_ok 0) and the journal
 }
 
+# services to watch HERE: the MONITOR_UNITS this node has enabled (generated = podman quadlets like keycloak).
+# Installed-but-disabled ones (nfs-server on a compute node) would read as "down" forever.
+watch=$(for u in $(systemctl list-units --all --type=service --plain --no-legend | awk '{print $1}' | grep -E "^($MONITOR_UNITS)[.]service$"); do
+  case $(systemctl is-enabled "$u" 2>/dev/null) in enabled|generated) echo "${u%.service}";; esac
+done | sort | paste -sd'|')
 copy "$SRC/$NODE_REL/node_exporter" /usr/local/bin/node_exporter
 unit node_exporter.service <<EOF
 # Written by OOD-Install/9-monitoring (node-setup.sh). Scraped by Prometheus on $MASTER_IP only (firewalld).
@@ -81,7 +86,7 @@ After=network-online.target
 [Service]
 User=node_exporter
 Group=node_exporter
-ExecStart=/usr/local/bin/node_exporter --web.listen-address=:$PORT --collector.textfile.directory=$TXT
+ExecStart=/usr/local/bin/node_exporter --web.listen-address=:$PORT --collector.textfile.directory=$TXT ${watch:+--collector.systemd --collector.systemd.unit-include=($watch)[.]service}
 Restart=always
 RestartSec=5
 NoNewPrivileges=yes
@@ -114,7 +119,7 @@ else notes+=("WARNING: firewalld is off: port $PORT is open to the whole network
 
 for _ in 1 2 3 4 5; do m=$(curl -sf "http://localhost:$PORT/metrics" || true); [ -n "$m" ] && break; sleep 1; done
 [ -n "$m" ] || { echo "node_exporter doesn't answer on :$PORT (journalctl -u node_exporter)"; exit 1; }
-summary="node_exporter ok"
+summary="node_exporter ok, services: ${watch:-none}"
 [ -z "$GPU_NODE" ] || summary+=", GPUs: $(grep -c '^gpu_memory_total_bytes' <<<"$m" || true) (collector ok=$(awk '/^gpu_collector_ok/ {print $2}' <<<"$m"))"
 [ -z "$SLURM" ] || summary+=", Slurm collector ok=$(awk '/^slurm_collector_ok/ {print $2}' <<<"$m")"
 echo "$summary"; for n in "${notes[@]}"; do echo "  $n"; done

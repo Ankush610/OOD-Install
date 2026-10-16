@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Cluster monitoring: ONE Prometheus on master, the single place every app reads cluster metrics from
 # (OOD, Model Hub, anything later) at PROM_URL. Everything it collects comes from what this script installs:
-#   node_exporter   every node (MASTER_HOST, LOGIN_NODES, COMPUTE_NODES): CPU, RAM, disk, network, plus files from
+#   node_exporter   every node (MASTER_HOST, LOGIN_NODES, COMPUTE_NODES): CPU, RAM, disk, network, core services
+#                   (MONITOR_UNITS: running or not), plus files from
 #   gpu-metrics     every node Slurm lists GPUs on, every 15 s: nvidia-smi -> use, memory, temperature, power
 #   slurm-metrics   master, every 30 s: scontrol/squeue -> node state, CPUs/RAM/GPUs reserved, jobs per user
 # Plain binaries + systemd, no containers, no k8s, no change to Slurm's config. Prometheus is read-only (no
@@ -67,7 +68,7 @@ chmod -R a+rX "$MONITOR_ROOT"
 
 echo "== 3. Every node: node_exporter (:$NODE_EXPORTER_PORT, only $MASTER_IP may scrape) + its collectors"
 for n in $nodes; do
-  args=(SRC="$MONITOR_ROOT" NODE_REL="$NODE_REL" PORT="$NODE_EXPORTER_PORT" MASTER_IP="$MASTER_IP")
+  args=(SRC="$MONITOR_ROOT" NODE_REL="$NODE_REL" PORT="$NODE_EXPORTER_PORT" MASTER_IP="$MASTER_IP" MONITOR_UNITS="$MONITOR_UNITS")
   [ -z "${gpu_types[$n]+x}" ] || args+=(GPU_NODE=1 GPU_TYPES="${gpu_types[$n]}")
   [ "$n" != "$MASTER_HOST" ] || args+=(SLURM=1 SLURM_BIN="$SLURM_BIN" SLURM_CONF="$SLURM_CONF")
   if out=$(on "$n" "$HERE/node-setup.sh" "${args[@]}" 2>&1); then printf '%s: %s\n' "$n" "$out"
@@ -87,14 +88,19 @@ put() {  # put <file>: stdin -> $ETC/<file>; prints "<file> " if it changed
   [ "$(cat "$ETC/$1" 2>/dev/null)" = "$new" ] || { printf '%s\n' "$new" > "$ETC/$1"; printf '%s ' "$1"; }
   chmod 644 "$ETC/$1"
 }
+# rules checked and tested HERE first: a broken rule stops the install before the running config is touched
+/usr/local/bin/promtool check rules "$HERE/rules.yml" "$HERE/node-alerts.yml" >/dev/null &&
+  /usr/local/bin/promtool test rules "$HERE/rules_test.yml" >/dev/null ||
+  { echo "Rules rejected (promtool test rules $HERE/rules_test.yml): nothing changed, Prometheus keeps running the old ones." >&2; exit 1; }
 changed=$(put rules.yml < "$HERE/rules.yml")
+changed+=$(put node-alerts.yml < "$HERE/node-alerts.yml")
 changed+=$(put prometheus.yml <<EOF
 # Written by OOD-Install/9-monitoring/1-install.sh from site.conf: edit those, not this file (a rerun overwrites it).
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels: {cluster: $CLUSTER_ID}
-rule_files: [$ETC/rules.yml]
+rule_files: [$ETC/rules.yml, $ETC/node-alerts.yml]
 
 scrape_configs:
   - job_name: prometheus
@@ -102,19 +108,17 @@ scrape_configs:
 
   # every node's node_exporter; its textfile folder adds gpu_* (GPU nodes) and slurm_* (master) series
   - job_name: node
+    # slurm_* series name the node they describe ("node" = its hostname), not master where they're collected:
+    # their own node label wins over the target's
+    honor_labels: true
     static_configs: [{targets: [$(for n in $nodes; do printf "'%s:%s', " "$n" "$NODE_EXPORTER_PORT"; done | sed 's/, $//')]}]
     relabel_configs:
       - {source_labels: [__address__], regex: '([^:]+):[0-9]+', target_label: node}
-    metric_relabel_configs:
-      # slurm_* series name the node they describe ("node" = its hostname), not master where they're collected:
-      # Prometheus renames such a clashing label to exported_node; put it back
-      - {source_labels: [exported_node], regex: '(.+)', target_label: node}
-      - {regex: exported_node, action: labeldrop}
 EOF
 )
 /usr/local/bin/promtool check config --syntax-only "$ETC/prometheus.yml" >/dev/null &&
-  /usr/local/bin/promtool check rules "$ETC/rules.yml" >/dev/null ||
-  { echo "promtool rejects $ETC/prometheus.yml or rules.yml (a running Prometheus keeps the old one)." >&2; exit 1; }
+  /usr/local/bin/promtool check rules "$ETC/rules.yml" "$ETC/node-alerts.yml" >/dev/null ||
+  { echo "promtool rejects $ETC/prometheus.yml or a rules file (a running Prometheus keeps the old one)." >&2; exit 1; }
 unit=$(cat <<EOF
 # Written by OOD-Install/9-monitoring/1-install.sh. Query API (read-only): $PROM_URL/api/v1/query
 [Unit]

@@ -20,6 +20,8 @@ login node:  OOD app "Cluster monitor" (Interactive Apps menu + home page card) 
 | `gpu-metrics.sh` | nvidia-smi → `gpu_*`. Keeps only the GPU types Slurm schedules, so a display card next to an A30 is dropped. |
 | `slurm-metrics.py` | scontrol/squeue → `slurm_*`. Read-only. `--test` checks the parsing. |
 | `rules.yml` | Named queries for apps, plus alerts |
+| `rules_test.yml` | Tests for `rules.yml` with made-up series. `1-install.sh` runs them first; a failure stops it. |
+| `node-alerts.yml` | node_exporter's own alerts (disk, inode, RAID, memory, clock, network), rendered from `node-alerts.jsonnet` |
 | `2-install-ood-app.sh` | Run on the login node. Installs the OOD app below. |
 | `ood-app/cluster_status/` | The OOD app: `passenger_wsgi.py` (asks Prometheus, read-only) + `public/app.js` (the page) |
 

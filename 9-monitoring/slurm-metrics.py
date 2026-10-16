@@ -21,7 +21,8 @@ DOWN = {"DOWN", "DRAIN", "FAIL", "NOT_RESPONDING", "POWERED_DOWN", "POWERING_DOW
 
 
 def slurm(*cmd):
-    return subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30).stdout
+    # 20 s: two calls stay under the unit's 60 s kill, so a hung slurmctld gives collector_ok 0, not a stale file
+    return subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=20).stdout
 
 
 def gpus(gres):

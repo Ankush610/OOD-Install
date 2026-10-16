@@ -2,6 +2,7 @@
 # Recording rules = named queries: apps (OOD, Model Hub, ...) ask for these names instead of writing their own PromQL,
 # so a change in how something is measured happens here once. Every series has a `node` label (the hostname).
 # Alerts: visible at PROM_URL/alerts and /api/v1/alerts. Nothing sends them anywhere yet (no Alertmanager).
+# Disk, inode, RAID, memory, clock, network alerts: node-alerts.yml (node_exporter's own set).
 groups:
   - name: node                                # node_exporter, every node
     rules:
@@ -44,6 +45,12 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "{{ $labels.job }} on {{ $labels.node }} has not answered for 5 minutes"
+      - alert: ServiceDown                    # a core service (MONITOR_UNITS in site.conf) stopped or failed
+        expr: node_systemd_unit_state{state="active"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.name }} on {{ $labels.node }} is not running (systemctl status {{ $labels.name }})"
       - alert: SlurmNodeUnavailable           # down, drained, not responding...: takes no new jobs
         expr: (slurm_node_available == 0) * on (slurm_node) group_left (state, reason) slurm_node_info
         for: 10m
@@ -62,21 +69,54 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "{{ $labels.file }} on {{ $labels.node }} not updated for {{ $value | humanizeDuration }}"
-      - alert: DiskAlmostFull
-        expr: node:disk_used:ratio > 0.9
-        for: 15m
+      - alert: GpuEccErrors                   # uncorrectable memory errors: drain the node, reset the GPU
+        expr: gpu_ecc_errors_uncorrected > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.node }} GPU {{ $labels.gpu }} ({{ $labels.name }}): {{ $value }} uncorrectable memory errors; drain the node, reset the GPU"
+      - alert: GpuRemapPending                # a bad memory row is replaced at the next GPU reset
+        expr: gpu_remapped_rows_pending == 1
+        for: 5m
         labels: {severity: warning}
         annotations:
-          summary: "{{ $labels.node }}: / is {{ $value | humanizePercentage }} full"
-      - alert: MemoryAlmostFull
-        expr: node:mem_used:ratio > 0.95
-        for: 15m
+          summary: "{{ $labels.node }} GPU {{ $labels.gpu }} ({{ $labels.name }}) needs a reset to repair its memory (when idle)"
+      - alert: GpuThrottled                   # hardware slowdown: power brake or overheating
+        expr: gpu_hw_slowdown == 1
+        for: 10m
         labels: {severity: warning}
         annotations:
-          summary: "{{ $labels.node }}: {{ $value | humanizePercentage }} of RAM in use"
+          summary: "{{ $labels.node }} GPU {{ $labels.gpu }} ({{ $labels.name }}) slowed down by the hardware (power or heat)"
+      - alert: GpuMissing                     # Slurm has more GPUs on a node than nvidia-smi shows: one fell off the bus
+        expr: slurm_node_gpus > on (node) group_left () (count by (node) (gpu_memory_total_bytes) or on (node) (0 * gpu_collector_ok))
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.node }}: Slurm has {{ $value }} GPUs, nvidia-smi sees fewer (GPU fell off the bus?)"
       - alert: GpuHot
         expr: gpu:temp:celsius > 85
         for: 10m
         labels: {severity: warning}
         annotations:
           summary: "{{ $labels.node }} GPU {{ $labels.gpu }} ({{ $labels.name }}) at {{ $value }} °C"
+
+  - name: prometheus                          # Prometheus watching itself (from prometheus-mixin)
+    rules:
+      - alert: PrometheusBadConfig            # a reload failed: it keeps running the OLD config and rules
+        expr: max_over_time(prometheus_config_last_reload_successful{job="prometheus"}[5m]) == 0
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "Prometheus on {{ $labels.node }} rejected its new config: still running the old one (journalctl -u prometheus)"
+      - alert: PrometheusRuleFailures         # a rule errors every evaluation: its alert can't fire
+        expr: increase(prometheus_rule_evaluation_failures_total{job="prometheus"}[5m]) > 0
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "Prometheus on {{ $labels.node }}: rule group {{ $labels.rule_group }} fails to evaluate"
+      - alert: PrometheusTSDBCompactionsFailing   # it can't merge its data blocks: disk fills, queries slow
+        expr: increase(prometheus_tsdb_compactions_failed_total{job="prometheus"}[3h]) > 0
+        for: 4h
+        labels: {severity: warning}
+        annotations:
+          summary: "Prometheus on {{ $labels.node }}: {{ $value | humanize }} failed compactions in 3 h (disk full? journalctl -u prometheus)"

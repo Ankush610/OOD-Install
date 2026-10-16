@@ -1,0 +1,73 @@
+# Tests for rules.yml with made-up series: promtool test rules rules_test.yml (1-install.sh runs it before copying
+# anything, so a broken rule stops the install and the running Prometheus keeps its config).
+# Covers the rules with joins or tricky logic; node-alerts.yml is node_exporter's own, tested upstream.
+rule_files: [rules.yml, node-alerts.yml]
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'node_systemd_unit_state{node="master",name="httpd.service",state="active"}'
+        values: '1 0x10'                       # stops after 1 min
+      - series: 'node_systemd_unit_state{node="master",name="munge.service",state="active"}'
+        values: '1x10'
+    alert_rule_test:
+      - {eval_time: 2m, alertname: ServiceDown, exp_alerts: []}     # pending: 2 min not over yet
+      - eval_time: 4m
+        alertname: ServiceDown
+        exp_alerts:
+          - exp_labels: {severity: critical, node: master, name: httpd.service, state: active}
+            exp_annotations: {summary: "httpd.service on master is not running (systemctl status httpd.service)"}
+
+  - interval: 1m
+    input_series:
+      # cn01: Slurm says 2, nvidia-smi sees 1 -> missing.  cn02: collector works, sees none -> missing.
+      # cn03: no collector at all (node down) -> not this alert (TargetDown covers it).  cn04: all there.
+      - {series: 'slurm_node_gpus{node="cn01",slurm_node="cn01"}', values: '2x15'}
+      - {series: 'gpu_memory_total_bytes{node="cn01",gpu="0"}', values: '1x15'}
+      - {series: 'gpu_collector_ok{node="cn01"}', values: '1x15'}
+      - {series: 'slurm_node_gpus{node="cn02",slurm_node="cn02"}', values: '1x15'}
+      - {series: 'gpu_collector_ok{node="cn02"}', values: '1x15'}
+      - {series: 'slurm_node_gpus{node="cn03",slurm_node="cn03"}', values: '1x15'}
+      - {series: 'slurm_node_gpus{node="cn04",slurm_node="cn04"}', values: '1x15'}
+      - {series: 'gpu_memory_total_bytes{node="cn04",gpu="0"}', values: '1x15'}
+      - {series: 'gpu_collector_ok{node="cn04"}', values: '1x15'}
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: GpuMissing
+        exp_alerts:
+          - exp_labels: {severity: critical, node: cn01, slurm_node: cn01}
+            exp_annotations: {summary: "cn01: Slurm has 2 GPUs, nvidia-smi sees fewer (GPU fell off the bus?)"}
+          - exp_labels: {severity: critical, node: cn02, slurm_node: cn02}
+            exp_annotations: {summary: "cn02: Slurm has 1 GPUs, nvidia-smi sees fewer (GPU fell off the bus?)"}
+
+  - interval: 1m
+    input_series:
+      - {series: 'gpu_ecc_errors_uncorrected{node="cn01",gpu="0",name="NVIDIA A30"}', values: '0 0 3x5'}
+      - {series: 'gpu_remapped_rows_pending{node="cn01",gpu="0",name="NVIDIA A30"}', values: '0x7'}
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: GpuEccErrors
+        exp_alerts:
+          - exp_labels: {severity: critical, node: cn01, gpu: "0", name: NVIDIA A30}
+            exp_annotations: {summary: "cn01 GPU 0 (NVIDIA A30): 3 uncorrectable memory errors; drain the node, reset the GPU"}
+      - {eval_time: 7m, alertname: GpuRemapPending, exp_alerts: []}
+
+  - interval: 1m
+    input_series:
+      - {series: 'slurm_node_available{node="cn02",slurm_node="cn02"}', values: '0x15'}
+      - {series: 'slurm_node_info{node="cn02",slurm_node="cn02",state="down",reason="Not responding"}', values: '1x15'}
+      - {series: 'slurm_node_available{node="cn01",slurm_node="cn01"}', values: '1x15'}
+      - {series: 'slurm_node_gpus{node="cn01",slurm_node="cn01"}', values: '2x15'}
+      - {series: 'slurm_node_gpus_alloc{node="cn01",slurm_node="cn01"}', values: '1x15'}
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: SlurmNodeUnavailable
+        exp_alerts:
+          - exp_labels: {severity: warning, node: cn02, slurm_node: cn02, state: down, reason: Not responding}
+            exp_annotations: {summary: "Slurm node cn02 is down: Not responding"}
+    promql_expr_test:
+      - expr: slurm:node_gpus_free
+        eval_time: 1m
+        exp_samples:
+          - {labels: 'slurm:node_gpus_free{node="cn01",slurm_node="cn01"}', value: 1}

@@ -100,7 +100,7 @@ function render() {
     ${ERR ? `<div class="alert alert-danger small py-2 d-flex gap-2"><i class="bi bi-wifi-off"></i><div>Couldn't refresh: ${h(ERR)}
       Showing what it said at ${h(new Date(d.taken).toLocaleTimeString())}.</div></div>` : ''}
     ${d.collectors_failing?.length ? `<div class="alert alert-secondary small py-2"><i class="bi bi-info-circle me-1"></i>Part of the
-      monitoring isn't collecting (${h(d.collectors_failing.join(', '))}): some numbers may be missing.</div>` : ''}
+      monitoring isn't collecting (${h(d.collectors_failing.join(', '))}): some numbers may be missing or old.</div>` : ''}
     ${problems(d)}${kpis(d, types)}${legend(d)}${clusterMap(d, types)}
     <div class="card"><div class="card-body p-0">
       ${toolbar(d, counts, types, view, list.length)}
@@ -115,7 +115,7 @@ function render() {
 function problems(d) {
   const firing = d.alerts.filter(a => a.state === 'firing');
   if (!firing.length) return '';
-  const icon = a => ({ GpuHot: 'thermometer-high', DiskAlmostFull: 'device-hdd', MemoryAlmostFull: 'memory' })[a.name] || 'exclamation-circle';
+  const icon = a => a.name.startsWith('NodeFilesystem') ? 'device-hdd' : ({ GpuHot: 'thermometer-high', NodeMemoryHighUtilization: 'memory' })[a.name] || 'exclamation-circle';
   const row = a => `<div class="d-flex gap-2 small py-1 border-top border-warning-subtle"><i class="bi bi-${icon(a)}"></i>
     <span class="me-auto">${h(a.summary)}</span>${a.since ? `<span class="text-nowrap opacity-75">for ${ago(a.since)}</span>` : ''}</div>`;
   const open = $('#more-problems')?.classList.contains('show');

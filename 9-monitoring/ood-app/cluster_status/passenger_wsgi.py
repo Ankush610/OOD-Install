@@ -24,7 +24,8 @@ NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 # one request for every series the page needs (all named in ../rules.yml or written by the collectors)
 # (one selector, not "a or up": `or` drops up wherever a recording rule has the same labels)
 SERIES = ('{__name__=~"slurm_node_.*|slurm_jobs|gpu_(utilization_ratio|memory_used_bytes|memory_total_bytes|'
-          'temperature_celsius|power_watts)|node:(cpu|mem)_used:ratio|up"}')
+          'temperature_celsius|power_watts)|node:(cpu|mem)_used:ratio|up|.+_collector_ok|node_textfile_mtime_seconds"}')
+STALE = 120   # seconds: a collector file older than this is old news (they write every 15-30 s)
 
 
 class Fail(Exception):
@@ -47,9 +48,9 @@ def num(v):
 
 
 def status():
-    by_name = {}
+    by_name, now = {}, time.time()
     for r in prom("query", query=SERIES)["result"]:
-        m = r["metric"]
+        m, now = r["metric"], r["value"][0]   # Prometheus' clock, not this host's
         if m["__name__"] == "up" and m.get("job") != "node":
             continue
         by_name.setdefault(m["__name__"], []).append((m, num(r["value"][1])))
@@ -115,7 +116,10 @@ def status():
     alerts = [{"name": a["labels"].get("alertname", ""), "state": a.get("state", ""), "since": a.get("activeAt", ""),
                "summary": a.get("annotations", {}).get("summary", a["labels"].get("alertname", ""))}
               for a in prom("alerts").get("alerts", [])]
-    stale = [m.get("__name__") for name in ("slurm_collector_ok", "gpu_collector_ok") for m, v in by_name.get(name, []) if v == 0]
+    stale = [f'{m["__name__"]} on {m.get("node")}' for name in ("slurm_collector_ok", "gpu_collector_ok") for m, v in by_name.get(name, []) if v == 0]
+    # a collector that stopped (timer off, killed) leaves its last file behind, still saying ok 1
+    stale += [f'{os.path.basename(m.get("file", "?"))} on {m.get("node")}, {int(now - v) // 60} min old'
+              for m, v in by_name.get("node_textfile_mtime_seconds", []) if v and now - v > STALE]
     return {"user": pwd.getpwuid(os.getuid()).pw_name, "taken": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "nodes": sorted(nodes.values(), key=lambda n: n["node"]),
             "jobs": jobs, "alerts": alerts, "collectors_failing": stale}
 
