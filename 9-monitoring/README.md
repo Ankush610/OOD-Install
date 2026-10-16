@@ -64,8 +64,8 @@ Interactive Apps → Cluster monitor, and a card in the Admin section of the hom
   how busy it really is), grey = not available.
   A ⚠ next to a node: a faulty GPU (memory errors, needs a reset, slowed down), a missing GPU (dashed square: Slurm has
   it, the node doesn't see it), or a core service not running there.
-- **Side panel** per node: what needs attention (each with How to fix), CPU and memory reserved vs in use, each GPU and
-  its health, the last hour, who runs what there.
+- **Node popup** (modal, full screen on phones): what needs attention (each with How to fix), CPU and memory reserved vs in use, each GPU and
+  its health (in use and memory as meters, like CPU), the last hour, who runs what there.
 - **Services tab:** one sentence first ("Everything is answering", or what is down and what that breaks); the services
   people connect to (portal, sign-in, LDAP, MLflow, registry, gateway) with OK / Down, since when, response time and
   certificate days left (amber < 30, red < 7); the core services on each node (`MONITOR_UNITS`) with the nodes they

@@ -1,6 +1,6 @@
 // Cluster monitor (Bootstrap 5.3, Model Hub's look). Read-only. Talks only to this app's backend (passenger_wsgi.py):
 //   GET api/status            the whole cluster (refreshed every 30 s while the tab is visible)
-//   GET api/history/<node>    one node's last hour, when its detail panel opens
+//   GET api/history/<node>    one node's last hour, when its detail popup opens
 // Two tabs. Nodes: a summary, a one-square-per-node map, a sortable/filterable table grouped by node type (cards up to
 // 8 nodes), a side panel per node. Services: is every service answering (as a user calls it), the core services on
 // each node, and the monitoring's own health. Problems (firing alerts) sit above both, each with "Show" and "How to fix".
@@ -427,24 +427,25 @@ function detail(n, hist) {
     ${n.reason ? `<div class="alert alert-${st.c} small py-2"><i class="bi bi-info-circle me-1"></i><b>${h(n.reason)}.</b> ${st.k === 'drain' ? 'Running jobs finish; Slurm sends it no new ones.' : 'Slurm sends it no new jobs.'}</div>` : ''}
     ${!n.up ? `<p class="text-body-secondary small">${dead ? 'The node doesn\'t answer' : 'Monitoring can\'t reach this node right now'}, so there are no live numbers.</p>` : `
     <div class="eyebrow mb-2">CPU and memory</div>
-    ${bar2('CPU', n.cpus_alloc / (n.cpus || 1), n.cpu_used, `${n.cpus_alloc}/${n.cpus}`)}
-    ${bar2('Memory', n.mem_alloc / (n.mem || 1), n.mem_used, pair(n.mem_alloc, n.mem), true)}
+    <div class="row g-4"><div class="col-md-6">${bar2('CPU', n.cpus_alloc / (n.cpus || 1), n.cpu_used, `${n.cpus_alloc}/${n.cpus}`)}</div>
+    <div class="col-md-6">${bar2('Memory', n.mem_alloc / (n.mem || 1), n.mem_used, pair(n.mem_alloc, n.mem), true)}</div></div>
     <div class="mt-3" id="spark">${hist === undefined ? '<div class="small text-body-secondary"><span class="spinner-border spinner-border-sm me-1"></span>Loading the last hour…</div>'
       : hist === null ? '<div class="small text-body-secondary">Couldn\'t load the history.</div>' : spark(hist)}</div>`}
     ${n.gpus.length ? `<div class="eyebrow mt-4 mb-2">GPUs · ${freeGpus(n)} of ${n.gpus.length} free</div>
-      <div class="table-responsive"><table class="table table-sm small align-middle"><thead><tr><th>#</th><th><span class="visually-hidden">Colour</span></th><th>Status</th><th>Busy</th><th>Memory</th><th class="text-end">Temp</th><th class="text-end">Power</th></tr></thead><tbody>
+      <div class="table-responsive"><table class="table table-sm small align-middle gpu-table"><thead><tr><th>#</th><th><span class="visually-hidden">Colour</span></th><th>Status</th><th>In use</th><th>Memory, GB</th><th class="text-end">Temp</th><th class="text-end">Power</th></tr></thead><tbody>
       ${n.gpus.map(g => `<tr><td>${h(g.gpu)}</td><td><span class="g ${gpuClass(g, n)} ${gpuRing(g)} d-inline-block"></span></td>
         <td>${!n.up || g.util == null ? '<span class="text-body-secondary">no data</span>' : g.reserved ? (g.util < .1 ? '<span class="text-warning-emphasis">reserved, idle</span>' : 'reserved')
           : takesJobs(n) ? '<span class="text-success-emphasis">free</span>' : '<span class="text-body-secondary">not available</span>'}
           ${(i => i ? `<div class="sub text-${i[0]}-emphasis text-nowrap"><i class="bi bi-exclamation-triangle-fill me-1"></i>${i[1]}</div>`
             : g.ecc != null || g.slow != null ? '<div class="sub text-success-emphasis"><i class="bi bi-check-circle me-1"></i>healthy</div>' : '')(gpuIssue(g))}</td>
-        <td>${pct(g.util)}</td><td class="font-monospace text-nowrap">${g.mem_total ? `${((g.mem_used || 0) / GiB).toFixed(1)} / ${Math.round(g.mem_total / GiB)} GB` : '–'}</td>
+        <td>${!n.up || g.util == null ? '–' : mini(g.util, pct(g.util), 'success')}</td>
+        <td>${g.mem_total ? mini((g.mem_used || 0) / g.mem_total, `${((g.mem_used || 0) / GiB).toFixed(1)}/${Math.round(g.mem_total / GiB)}`, 'info', true) : '–'}</td>
         <td class="text-end ${g.temp >= 85 ? 'text-danger fw-semibold' : ''}">${g.temp != null ? `${Math.round(g.temp)} °C` : '–'}</td><td class="text-end">${g.power != null ? `${Math.round(g.power)} W` : '–'}</td></tr>`).join('')}
       </tbody></table></div>` : ''}
-    <div class="eyebrow mt-4 mb-2">Running here</div>
+    <div class="row g-4 mt-0"><div class="col-md-6"><div class="eyebrow mb-2">Running here</div>
     ${users.length ? `<ul class="list-group list-group-flush small">${users.map(([u, k]) => `<li class="list-group-item px-0 d-flex"><i class="bi bi-person me-2"></i><span class="me-auto">${h(u)}</span><span class="text-body-secondary">${k} job${k > 1 ? 's' : ''}</span></li>`).join('')}</ul>`
-      : `<p class="small text-body-secondary">${dead ? 'Nothing can run here now.' : 'Nothing running.'}</p>`}
-    <div class="eyebrow mt-4 mb-2">Partitions</div><div>${n.partitions.map(p => `<span class="badge rounded-pill bg-body-secondary text-body fw-normal me-1">${h(p)}</span>`).join('') || '–'}</div>`;
+      : `<p class="small text-body-secondary">${dead ? 'Nothing can run here now.' : 'Nothing running.'}</p>`}</div>
+    <div class="col-md-6"><div class="eyebrow mb-2">Partitions</div><div>${n.partitions.map(p => `<span class="badge rounded-pill bg-body-secondary text-body fw-normal me-1">${h(p)}</span>`).join('') || '–'}</div></div></div>`;
 }
 
 const histCache = {};
@@ -452,13 +453,13 @@ async function openDetail(name) {
   const n = DATA?.nodes.find(x => x.node === name); if (!n) return;
   openNode = name; writeHash();
   detail(n, histCache[name]?.data);
-  bootstrap.Offcanvas.getOrCreateInstance($('#detail')).show();
+  bootstrap.Modal.getOrCreateInstance($('#detail')).show();
   if (histCache[name] && Date.now() - histCache[name].at < 60000) return;   // the history moves by the minute
   try { histCache[name] = { at: Date.now(), data: await api(`history/${encodeURIComponent(name)}`) }; }
   catch { histCache[name] = { at: Date.now(), data: null }; }
   if (openNode === name && $('#spark')) $('#spark').innerHTML = histCache[name].data ? spark(histCache[name].data) : '<div class="small text-body-secondary">Couldn\'t load the history.</div>';
 }
-$('#detail').addEventListener('hidden.bs.offcanvas', () => { openNode = null; writeHash(); });
+$('#detail').addEventListener('hidden.bs.modal', () => { openNode = null; writeHash(); });
 
 // ---------- events ----------
 function wire() {

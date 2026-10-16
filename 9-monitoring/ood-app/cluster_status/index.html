@@ -27,11 +27,11 @@
   </nav>
   <main class="container-xxl py-4" id="app"></main>
 
-  <div class="offcanvas offcanvas-end node-detail" tabindex="-1" id="detail" aria-labelledby="detail-title">
-    <div class="offcanvas-header border-bottom"><div class="min-w-0" id="detail-head"></div>
-      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button></div>
-    <div class="offcanvas-body" id="detail-body"></div>
-  </div>
+  <div class="modal fade node-detail" tabindex="-1" id="detail" aria-labelledby="detail-title"><div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down"><div class="modal-content">
+    <div class="modal-header"><div class="min-w-0" id="detail-head"></div>
+      <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+    <div class="modal-body" id="detail-body"></div>
+  </div></div></div>
 
   <script src="vendor/bootstrap/bootstrap.bundle.min.js"></script>
   <script src="app.js"></script>
