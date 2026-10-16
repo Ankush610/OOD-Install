@@ -79,6 +79,29 @@ python3 -c 'import ast,sys; [ast.parse(open(f).read()) for f in sys.argv[1:]]' 3
 - Each folder's README keeps a Symptom | Cause | Fix table. When you hit a new failure mode, add a row.
 - After changing an OOD app or config on the server: **Restart Web Server** in OOD (it caches config per user).
 
-## Sibling repo
+## project/ (private: plans, build logs, design)
 
-`../AI-Stack` holds the design docs (see its `CLAUDE.md`): `docs/cluster/` (architecture, `master:5000` registry, installed versions), `docs/model-hub/` (full Model Hub design; the current scope is `docs/model-hub/versions/version-2/`; its `build-plan.md` lists what goes in `5-model-hub/`; v1 is git tag `v1`), and test manifests in `k8s/examples/` (slurm-bridge, DRA GPUs).
+Moved here from the old AI-Stack repo (deleted). This repo is private; the public docs are `../AI-Factory-Docs`.
+
+```
+project/versions/version-N/   per version: README (decisions + status), build-plan, build-log (lessons, fixes)
+                              v1 = tag v1, v2 = tag v2 (closed 2026-10-13), version-3 = CURRENT
+project/design/               full Model Hub design (end goal): README, user-flow, serving, tenancy, publishing
+project/cluster-versions.md   what's installed (k8s, containerd, DRA classes, slurm-bridge, Prometheus, ...)
+project/vllm-notes.md         KV cache, max-model-len / max-num-seqs, preemption, KEDA scaling
+project/rejected/             rejected approaches (Docker + Slinky)
+project/k8s-examples/         test manifests (slurm-bridge, DRA GPUs)
+```
+
+- Every build step gets a dated entry in the current `versions/version-N/build-log.md`; plans go in its `build-plan.md`.
+- Starting a new version = new `versions/version-N/` folder (+ git tag when closed); never rewrite an old one.
+- `design/*.md` describe the end goal; a version folder only says which parts it uses and links to them. Mark
+  anything not built yet as **(vN+)**.
+- Check claims against the live cluster before writing them (`kubectl`, `sinfo`, `helm get values -n slurm slurm-bridge`).
+
+## Sibling repos
+
+- `../AI-Factory-Docs` (PUBLIC MkDocs site, GitHub Pages): user + admin guides, the main reference for how things
+  work. When a change here alters how users or admins work, update its page there in the same piece of work (its
+  `CLAUDE.md` maps each folder here to its pages). No IPs or secrets there.
+- `/home/apps/containers` (OOD-Container): Apptainer `.def` files for the training SIFs (`CONTAINERS_ROOT`).

@@ -10,7 +10,7 @@ it works for SSH, Slurm, OOD and MLflow at once. Anyone can also change theirs i
 (`https://$OOD_SERVERNAME/auth/realms/$KEYCLOAK_REALM/account`). Keycloak binds as `cn=keycloak-passwords,<LDAP_BASE>`,
 which an LDAP access rule lets write `userPassword` under `ou=People` and nothing else (`2-realm.sh` checks that).
 **Web only:** someone who only ever uses SSH keeps the one-time password until they change it (`passwd`).
-Design: `../../AI-Stack/docs/model-hub/versions/version-2/` (build-plan step 2).
+Design: `../project/versions/version-2/` (build-plan step 2).
 
 ## Run (on master, after 0-registry, 1-ldap, 2-ood)
 

@@ -11,7 +11,7 @@ Every pod runs as the user (the UID policy insists), goes through slurm-bridge (
 which the pod-has-time-limit policy insists on) and asks for 0..MAX_GPUS GPUs; the user's quota is the real limit.
 vLLM with 2+ GPUs splits the model across them (tensor parallel); they come from one node (one pod = one node).
 
-A bare Pod, not a Deployment, on purpose (slurm-bridge 1.2.2, see AI-Stack version-1 build-log 2026-10-01):
+A bare Pod, not a Deployment, on purpose (slurm-bridge 1.2.2, see project/versions/version-1/build-log.md 2026-10-01):
   - slurm-bridge reads the slurmjob.* annotations from the pod's TOP owner. Under a Deployment that is the
     Deployment's own metadata, so pod-template annotations (time limit, exclusive) were silently ignored.
   - when the Slurm job ends, slurm-bridge deletes the pod; a Deployment would make a new pod = a new job, forever.

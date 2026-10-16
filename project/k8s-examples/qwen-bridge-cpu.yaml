@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen-bridge
+  namespace: slurm-bridge
+  annotations:
+    slurmjob.slinky.slurm.net/job-name: qwen-inference
+    slurmjob.slinky.slurm.net/partition: slurm-bridge
+    slurmjob.slinky.slurm.net/exclusive: "false"
+    slurmjob.slinky.slurm.net/timelimit: "1440"
+
+spec:
+  backoffLimit: 2
+
+  template:
+    metadata:
+      labels:
+        app: qwen
+
+    spec:
+      schedulerName: slurm-bridge-scheduler
+      restartPolicy: OnFailure
+
+      containers:
+        - name: qwen
+          image: master:5000/qwen-llama:0.5b
+          imagePullPolicy: IfNotPresent
+
+          args:
+            - "-m"
+            - "/models/qwen.gguf"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8080"
+            - "-c"
+            - "4096"
+            - "-t"
+            - "4"
+
+          ports:
+            - containerPort: 8080
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          resources:
+            requests:
+              deviceclass.resource.kubernetes.io/dra.cpu: "4"
+              memory: 1Gi
+            limits:
+              deviceclass.resource.kubernetes.io/dra.cpu: "4"
+              memory: 4Gi

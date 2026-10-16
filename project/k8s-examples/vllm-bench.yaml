@@ -1,0 +1,60 @@
+# Single-A30 vLLM serve for `vllm bench serve` concurrency sweep (see project/vllm-notes.md)
+# Model dir is on master's NFS /home export -> static PV/PVC (no StorageClass on this cluster).
+apiVersion: v1
+kind: PersistentVolume
+metadata: { name: bench-model }
+spec:
+  capacity: { storage: 100Gi }
+  accessModes: [ReadOnlyMany]
+  mountOptions: [ro, nconnect=8]
+  nfs: { server: 192.168.40.102, path: /home/admin/Documents/AI-Stack/model, readOnly: true }
+  claimRef: { namespace: slurm-bridge, name: bench-model }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: bench-model, namespace: slurm-bridge }
+spec: { storageClassName: "", volumeName: bench-model, accessModes: [ReadOnlyMany], resources: { requests: { storage: 100Gi } } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: vllm-bench, namespace: slurm-bridge }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }   # one GPU: old pod must release it before the new one schedules
+  selector: { matchLabels: { app: vllm-bench } }
+  template:
+    metadata:
+      labels: { app: vllm-bench }
+      annotations:
+        slurmjob.slinky.slurm.net/job-name: vllm-bench
+        slurmjob.slinky.slurm.net/partition: slurm-bridge
+        slurmjob.slinky.slurm.net/exclusive: "false"
+        slurmjob.slinky.slurm.net/gres: "gres:gpu:a30:1"
+        slurmjob.slinky.slurm.net/timelimit: "240"
+    spec:
+      schedulerName: slurm-bridge-scheduler
+      tolerations:
+      - { key: slinky.slurm.net/managed-node, operator: Equal, value: slurm-bridge-scheduler, effect: NoExecute }
+      containers:
+      - name: vllm
+        image: master:5000/vllm-openai:latest
+        imagePullPolicy: IfNotPresent
+        args:
+        - /models/Qwen3.5-9B              # PV mounts the parent model/ dir; weights live in the subdir
+        - --served-model-name=qwen
+        - --max-model-len=32768           # longest single request (prompt + answer); ~1.45x of a full one fits in the KV pool
+        - --max-num-seqs=64               # cap on requests running at once; real limit is the KV pool (see project/vllm-notes.md)
+        - --gpu-memory-utilization=0.95   # 19GB weights on a 24GB A30 -> KV + Mamba pool is small, squeeze it
+        - --limit-mm-per-prompt={"image":0,"video":0}   # text-only bench, don't reserve vision memory
+        ports: [{ name: http, containerPort: 8000 }]
+        readinessProbe: { httpGet: { path: /health, port: 8000 }, periodSeconds: 10 }
+        startupProbe: { httpGet: { path: /health, port: 8000 }, periodSeconds: 10, failureThreshold: 90 }
+        resources:
+          requests: { cpu: "8", memory: 32Gi, nvidia.com/gpu: "1" }
+          limits:   { cpu: "8", memory: 32Gi, nvidia.com/gpu: "1" }
+        volumeMounts:
+        - { name: model, mountPath: /models, readOnly: true }
+        - { name: shm, mountPath: /dev/shm }
+      volumes:
+      - { name: model, persistentVolumeClaim: { claimName: bench-model } }
+      - { name: shm, emptyDir: { medium: Memory, sizeLimit: 8Gi } }

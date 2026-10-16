@@ -1,7 +1,7 @@
 # 5-model-hub
 
 Deploy registered MLflow models (ML, DL, LLM) as endpoints from OOD. Design and scope:
-`../../AI-Stack/docs/model-hub/` (v1: `versions/version-1/`). Built part by part; this README grows with it.
+`../project/design/` (versions: `../project/versions/`). Built part by part; this README grows with it.
 
 ## Run (on master, after ../3-mlflow; `7-install-ood-app.sh` on `LOGIN_HOST`)
 

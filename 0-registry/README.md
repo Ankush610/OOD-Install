@@ -9,7 +9,7 @@ podman build / k8s-image (any user, rootless) ──push──> REGISTRY on mast
                                                           (REGISTRY_DATA)            (cached locally after the first pull)
 ```
 
-Background and the manual steps: `../../AI-Stack/docs/cluster/container-registry.md`.
+Background: [containers and registry](https://ankush610.github.io/AI-Factory-Docs/how-it-works/06-containers-and-registry/), install page: [registry](https://ankush610.github.io/AI-Factory-Docs/admin/install/registry/).
 
 ## Run (on master, first: 3-mlflow and 5-model-hub push their images here)
 

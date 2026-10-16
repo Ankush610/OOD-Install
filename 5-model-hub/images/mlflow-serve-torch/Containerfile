@@ -7,7 +7,7 @@ ARG MLFLOW_VERSION
 COPY constraints.txt verify-pins.py /opt/
 # mlflow 3.15.1 declares pandas<3 but the SIF trains with pandas 3.0.5: pandas is left out of the resolve, then forced
 # to the SIF's version (a pickled pandas object must load with the pandas that wrote it). Tested end to end, see
-# AI-Stack/docs/model-hub/versions/version-1/build-log.md. verify-pins.py fails the build on any other drift.
+# OOD-Install/project/versions/version-1/build-log.md. verify-pins.py fails the build on any other drift.
 # pip's cache survives a failed build (a dropped multi-GB download isn't fetched again); 4-images.sh retries
 RUN --mount=type=cache,target=/root/.cache/pip \
     grep -v '^pandas==' /opt/constraints.txt > /tmp/c.txt \
