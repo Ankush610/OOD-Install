@@ -205,3 +205,17 @@ Not a Model Hub step, but the deploy form (free GPUs, "over your GPU limit") and
   Home page card moved from Data & Cluster to the Admin section (hidden for others: the widget shows only apps the
   user can open). `2-install-ood-app.sh` checks both ways: a normal LDAP user can't read it (narmada: OK), the
   backend answers as `admin`. The home widget was redeployed with setup-ood.sh's own envsubst line.
+
+## 2026-10-16 — repo layout; alerts runbook moved to the docs site
+
+- **AI-Stack repo deleted:** its plans, build logs, Model Hub design, cluster versions and vLLM notes moved to
+  `OOD-Install/project/` (this folder). Links repointed; pages that were dropped (architecture, registry) now link to
+  AI-Factory-Docs. The public docs site is the main reference; this repo (private) keeps plans and logs.
+- **Runbook → docs site:** "How to fix" linked the 9-monitoring README on GitHub, which 404s for anyone without access
+  now that OOD-Install is private. The runbook table now lives in AI-Factory-Docs `reference/monitoring.md#alerts`
+  (same `<a id="<alertname lower case>">` anchors + `#alerts-what-to-do`, checked against every alert in
+  `rules.yml`/`node-alerts.yml`; fuller "what to do" from the README). `RUNBOOK_URL` in `site.conf` points there; the
+  README section is now a link. No app code change: `app.js` already builds `RUNBOOK_URL#<alert>`.
+  - To apply on a running cluster: rerun `9-monitoring/2-install-ood-app.sh` on `LOGIN_HOST` (rewrites `site.json`),
+    then Restart Web Server.
+  - A new alert needs its anchored row in the docs page, or its How to fix lands at the top of the page.
