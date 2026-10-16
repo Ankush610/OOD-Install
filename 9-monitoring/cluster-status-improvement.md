@@ -1,6 +1,6 @@
 # Cluster status improvement: plan to make monitoring production grade
 
-Status on 2026-10-16: **Phase 1 and Phase 3 done.** Order now: Phase 3, UI (U.1–U.6), then Phase 2 (needs the SMTP details below).
+Status on 2026-10-16: **Phase 1, Phase 3 and the UI (U.1–U.6) done.** Phase 2 (email) last: needs the SMTP details below.
 
 ## Why: what's missing today
 
@@ -92,12 +92,12 @@ not. One request per refresh stays (add the series to the app's one query).
 
 | # | Change | Shows | Source |
 |---|---|---|---|
-| U.1 | **Services tab**: one row per service: OK (green) / Down (red) / Not checked, since when, response time | OOD, LDAP, Keycloak, MLflow, registry, gateway answering; core systemd services per node (slurmctld, munge, sssd, httpd, …) | `probe_success`, `probe_duration_seconds` (3.1), `node_systemd_unit_state` (1.2) |
-| U.2 | Certificate column in the Services tab: days left, amber < 30, red < 7 | OOD, LDAP, gateway certificates | `probe_ssl_earliest_cert_expiry` (3.2) |
-| U.3 | GPU health in the node panel's GPU table: ECC errors, repair pending, slowed down; a badge on the node when any is set | Per GPU | `gpu_ecc_errors_uncorrected`, `gpu_remapped_rows_pending`, `gpu_hw_slowdown` (1.4) |
-| U.4 | Missing GPU marked on the node ("Slurm 2, seen 1") | Per node | `GpuMissing` (1.4) |
-| U.5 | Monitoring health line: Prometheus config OK, rules OK, collectors fresh | Bottom of the page | `prometheus_config_last_reload_successful`, rule failures (1.6), stale files (1.5, done) |
-| U.6 | Problems box: icon per alert family (service, certificate, GPU, disk), link to its row in the Services tab or node panel | Top of the page | firing alerts |
+| U.1 ✅ | **Services tab**: one row per service: OK (green) / Down (red) / Not checked, since when, response time | OOD, LDAP, Keycloak, MLflow, registry, gateway answering; core systemd services per node (slurmctld, munge, sssd, httpd, …) | `probe_success`, `probe_duration_seconds` (3.1), `node_systemd_unit_state` (1.2) |
+| U.2 ✅ | Certificate column in the Services tab: days left, amber < 30, red < 7 | OOD, LDAP, gateway certificates | `probe_ssl_earliest_cert_expiry` (3.2) |
+| U.3 ✅ | GPU health in the node panel's GPU table: ECC errors, repair pending, slowed down; a badge on the node when any is set | Per GPU | `gpu_ecc_errors_uncorrected`, `gpu_remapped_rows_pending`, `gpu_hw_slowdown` (1.4) |
+| U.4 ✅ | Missing GPU marked on the node ("Slurm 2, seen 1") | Per node | `GpuMissing` (1.4) |
+| U.5 ✅ | Monitoring health line: Prometheus config OK, rules OK, collectors fresh | Bottom of the page | `prometheus_config_last_reload_successful`, rule failures (1.6), stale files (1.5, done) |
+| U.6 ✅ | Problems box: icon per alert family (service, certificate, GPU, disk), link to its row in the Services tab or node panel | Top of the page | firing alerts |
 
 ## Phase 4: features (separate track)
 

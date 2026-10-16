@@ -2,5 +2,5 @@
 name: Cluster monitor
 category: Interactive Apps
 subcategory: Servers
-description: "What's free, what's busy, and who is using it: every node's CPUs, memory and GPUs, from Slurm and the nodes themselves (read-only)"
+description: "For the admin: what is free and busy on every node, whether every service answers, and what to fix (read-only)"
 icon: fa://server

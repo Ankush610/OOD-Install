@@ -38,7 +38,7 @@ Runs on master unless marked [login] (= LOGIN_HOST; each script checks its host)
 8-admin/1-install.sh        root helper for the admin page: aistack-admin.py -> ADMIN_HELPER, sudo rule for OOD_ADMIN only, ADMIN_LOG, ssh key ADMIN_KEY on LOGIN_HOST -> root's authorized_keys (forced command)
 8-admin/2-install-ood-app.sh  [login] admin page (OOD app aistack_admin, Model Hub's look) readable by OOD_ADMIN only; every button = one helper call
 9-monitoring/1-install.sh   Prometheus on master (systemd, PROM_URL) + node_exporter on every node (node-setup.sh over ssh) with our textfile collectors: gpu-metrics.sh (nvidia-smi, GPU nodes) and slurm-metrics.py (scontrol/squeue, master); rules.yml = named queries apps read
-9-monitoring/2-install-ood-app.sh  [login] OOD app cluster_status (Interactive Apps menu + home card in 2-ood/branding/_ai_tools.html.erb, every user, read-only): Model Hub's look, its backend asks PROM_URL
+9-monitoring/2-install-ood-app.sh  [login] OOD app cluster_status (Interactive Apps menu + home card in the Admin section of 2-ood/branding/_ai_tools.html.erb, OOD_ADMIN only like 8-admin, read-only): Model Hub's look, its backend asks PROM_URL
 ```
 
 Local sanity checks (no tests or linters):

@@ -1,11 +1,12 @@
 """Cluster monitor backend: an OOD Passenger app that runs as the logged-in user. Read-only.
 
 It asks Prometheus (PROM_URL, ../1-install.sh) and turns its series into one JSON the page draws:
-  GET api/status          every node (Slurm state, CPU/RAM/GPU reserved and in use, each GPU, users), jobs, alerts
+  GET api/status          every node (Slurm state, CPU/RAM/GPU reserved and in use, each GPU and its health, users),
+                          jobs, alerts, services (probes + systemd units) and the monitoring's own health
   GET api/history/<node>  that node's CPU and GPU use over the last hour (only for the node a user opens)
 Fixed queries only: the one value from the URL (a node name) is checked before it goes into a query.
 Nothing here can change anything. Every user sees the same data, which is what squeue/sinfo already show them.
-site.json (written by 2-install-ood-app.sh): {"prom_url": PROM_URL, "login_partition": VIEWER_PARTITION}.
+site.json (written by 2-install-ood-app.sh): {"prom_url": PROM_URL, "login_partition": VIEWER_PARTITION, "runbook_url": RUNBOOK_URL}.
 """
 import json
 import mimetypes
@@ -22,9 +23,16 @@ PUBLIC = os.path.join(HERE, "public")
 SITE = json.load(open(os.path.join(HERE, "site.json")))
 NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 # one request for every series the page needs (all named in ../rules.yml or written by the collectors)
-# (one selector, not "a or up": `or` drops up wherever a recording rule has the same labels)
+# (one selector, not "a or up": `or` drops up wherever a recording rule has the same labels. The systemd series are
+# the exception: only state="active" is wanted, and their labels (name, state) clash with nothing)
 SERIES = ('{__name__=~"slurm_node_.*|slurm_jobs|gpu_(utilization_ratio|memory_used_bytes|memory_total_bytes|'
-          'temperature_celsius|power_watts)|node:(cpu|mem)_used:ratio|up|.+_collector_ok|node_textfile_mtime_seconds"}')
+          'temperature_celsius|power_watts|ecc_errors_uncorrected|remapped_rows_pending|hw_slowdown)|'
+          'node:(cpu|mem)_used:ratio|up|.+_collector_ok|node_textfile_mtime_seconds|'
+          'probe_(success|duration_seconds|ssl_earliest_cert_expiry)|prometheus_config_last_reload_successful"}'
+          ' or node_systemd_unit_state{state="active"}')
+GPU_FIELDS = {"gpu_utilization_ratio": "util", "gpu_memory_used_bytes": "mem_used", "gpu_memory_total_bytes": "mem_total",
+              "gpu_temperature_celsius": "temp", "gpu_power_watts": "power", "gpu_ecc_errors_uncorrected": "ecc",
+              "gpu_remapped_rows_pending": "remap", "gpu_hw_slowdown": "slow"}
 STALE = 120   # seconds: a collector file older than this is old news (they write every 15-30 s)
 
 
@@ -51,9 +59,8 @@ def status():
     by_name, now = {}, time.time()
     for r in prom("query", query=SERIES)["result"]:
         m, now = r["metric"], r["value"][0]   # Prometheus' clock, not this host's
-        if m["__name__"] == "up" and m.get("job") != "node":
-            continue
-        by_name.setdefault(m["__name__"], []).append((m, num(r["value"][1])))
+        name = m["__name__"] if m["__name__"] != "up" or m.get("job") == "node" else f'up_{m.get("job")}'
+        by_name.setdefault(name, []).append((m, num(r["value"][1])))
     infos = by_name.get("slurm_node_info", [])
     if not infos:
         raise Fail(502, "monitoring has no Slurm data: is slurm-metrics running on master? (journalctl -u slurm-metrics)")
@@ -79,20 +86,23 @@ def status():
 
     # each GPU nvidia-smi reports (only the types Slurm schedules; gpu-metrics.sh filters)
     gpu = {}
-    for name in ("gpu_utilization_ratio", "gpu_memory_used_bytes", "gpu_memory_total_bytes", "gpu_temperature_celsius", "gpu_power_watts"):
+    for name, key in GPU_FIELDS.items():
         for m, v in by_name.get(name, []):
             g = gpu.setdefault((m.get("node"), m.get("gpu")), {"gpu": m.get("gpu"), "name": m.get("name", "").replace("NVIDIA ", "")})
-            g[{"gpu_utilization_ratio": "util", "gpu_memory_used_bytes": "mem_used", "gpu_memory_total_bytes": "mem_total",
-               "gpu_temperature_celsius": "temp", "gpu_power_watts": "power"}[name]] = v
+            g[key] = v
+    gpu_ok = {m.get("node"): v for m, v in by_name.get("gpu_collector_ok", [])}
     reserved = {}
     for m, _ in by_name.get("slurm_node_gpu_reserved", []):
         reserved.setdefault(m.get("node"), set()).add(int(m["gpu"]))
     for n in nodes.values():
         mine = sorted((g for (node, _), g in gpu.items() if node == n["node"]), key=lambda g: int(g["gpu"]))
         count = int(n.get("gpu_count") or 0)
-        # node (or its collector) silent, or a card fell off the bus: Slurm still knows how many GPUs there should be
-        mine += [{"gpu": "?" if mine else str(i), "name": n["gpu_type"] or "GPU", "util": None}
+        # node (or its collector) silent, or a card fell off the bus: Slurm still knows how many GPUs there should be.
+        # Node up and nvidia-smi working, yet fewer cards = really missing (alert GpuMissing), not just no data
+        missing = max(0, count - len(mine)) if n["up"] and gpu_ok.get(n["node"]) == 1 else 0
+        mine += [{"gpu": "?" if mine else str(i), "name": n["gpu_type"] or "GPU", "util": None, "missing": bool(missing)}
                  for i in range(max(0, count - len(mine)))]
+        n["gpu_missing"] = missing
         # Slurm numbers a node's GPUs 0, 1, ... in gres.conf order; nvidia-smi numbers every card on the bus.
         # The n-th GPU Slurm knows = the n-th GPU we kept, in nvidia-smi order (a display card in between is skipped).
         # ponytail: assumes gres.conf lists the GPUs in bus order (true for AutoDetect=nvml and /dev/nvidia0..N)
@@ -114,14 +124,42 @@ def status():
         if m.get("state") in jobs:
             jobs[m["state"]] += int(v or 0)
     alerts = [{"name": a["labels"].get("alertname", ""), "state": a.get("state", ""), "since": a.get("activeAt", ""),
+               "severity": a["labels"].get("severity", ""), "node": a["labels"].get("node", ""),
+               "service": a["labels"].get("service", ""), "unit": a["labels"].get("name", ""),
                "summary": a.get("annotations", {}).get("summary", a["labels"].get("alertname", ""))}
               for a in prom("alerts").get("alerts", [])]
+    since = {(a["name"], a["service"] or a["node"], a["unit"]): a["since"] for a in alerts}
+
+    # services as a user meets them (blackbox_exporter probes), and the core systemd units on each node
+    services = {}
+    for name, key in (("probe_success", "ok"), ("probe_duration_seconds", "seconds"), ("probe_ssl_earliest_cert_expiry", "cert")):
+        for m, v in by_name.get(name, []):
+            s = services.setdefault(m.get("service", "?"), {"service": m.get("service", "?"), "target": m.get("instance", "")})
+            s[key] = v
+    for s in services.values():
+        cert = s.pop("cert", None)   # plain HTTP: no certificate
+        s["cert_days"] = None if cert is None else round((cert - now) / 86400, 1)
+        s["since"] = since.get(("ServiceUnreachable", s["service"], ""), "")
+    units = {}
+    for m, v in by_name.get("node_systemd_unit_state", []):
+        u = units.setdefault(m["name"].removesuffix(".service"), {"unit": m["name"].removesuffix(".service"), "ok": [], "down": []})
+        (u["ok"] if v == 1 else u["down"]).append({"node": m.get("node"), "since": since.get(("ServiceDown", m.get("node"), m["name"]), "")})
+
+    # the monitoring's own health: config loaded, rules evaluating, service checker answering
+    rules = [r for g in prom("rules").get("groups", []) for r in g.get("rules", [])]
+    cfg = [v for _, v in by_name.get("prometheus_config_last_reload_successful", [])]
+    checker = [v for _, v in by_name.get("up_blackbox", [])]
+    monitoring = {"config_ok": cfg[0] == 1 if cfg else None, "rules": len(rules),
+                  "rules_failing": sorted({r.get("name", "?") for r in rules if r.get("health") == "err"}),
+                  "checker_ok": (min(checker) == 1) if checker else None}
     stale = [f'{m["__name__"]} on {m.get("node")}' for name in ("slurm_collector_ok", "gpu_collector_ok") for m, v in by_name.get(name, []) if v == 0]
     # a collector that stopped (timer off, killed) leaves its last file behind, still saying ok 1
     stale += [f'{os.path.basename(m.get("file", "?"))} on {m.get("node")}, {int(now - v) // 60} min old'
               for m, v in by_name.get("node_textfile_mtime_seconds", []) if v and now - v > STALE]
     return {"user": pwd.getpwuid(os.getuid()).pw_name, "taken": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "nodes": sorted(nodes.values(), key=lambda n: n["node"]),
-            "jobs": jobs, "alerts": alerts, "collectors_failing": stale}
+            "jobs": jobs, "alerts": alerts, "collectors_failing": stale, "runbook_url": SITE.get("runbook_url", ""),
+            "services": sorted(services.values(), key=lambda s: s["service"]), "units": sorted(units.values(), key=lambda u: u["unit"]),
+            "monitoring": monitoring}
 
 
 def history(node):

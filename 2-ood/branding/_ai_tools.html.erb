@@ -27,12 +27,12 @@
     ["Data & Cluster", "hdd-stack", "", [
       ["files", "Files", "folder2-open", "yellow", "Home and scratch storage",
        "Browse, upload and manage files in your home and scratch directories."],
-      ["cluster_status", "Cluster monitor", "hdd-rack", "coral", "Nodes, GPUs and who uses them",
-       "See what's free and what's busy on every node: CPUs, memory and GPUs, live, with problems flagged."],
     ]],
     ["Admin", "shield-lock", "admin-only", [
       ["aistack_admin", "Admin Panel", "shield-lock", "green", "Cluster administration",
        "Monitor GPU usage across the cluster and manage users, teams and resource limits."],
+      ["cluster_status", "Cluster monitor", "hdd-rack", "coral", "Nodes, GPUs, services and alerts",
+       "What's free and busy on every node, whether every service answers, and what to fix: live, with problems flagged."],
     ]],
   ]
   apps = SysRouter.apps.index_by(&:name)

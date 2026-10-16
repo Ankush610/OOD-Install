@@ -10,7 +10,7 @@ every node:  node_exporter :9100 ── CPU, RAM, disk, network
                    gpu.prom    gpu-metrics.timer, 15 s, GPU nodes: nvidia-smi
                    slurm.prom  slurm-metrics.timer, 30 s, master only: scontrol/squeue --json
 master:      Prometheus  PROM_URL (:9090) ── collects every node_exporter ──> OOD, Model Hub, Grafana, curl ...
-login node:  OOD app "Cluster monitor" (Interactive Apps menu + home page card) ── reads PROM_URL, read-only, for every user
+login node:  OOD app "Cluster monitor" (Interactive Apps menu + home page card) ── reads PROM_URL, read-only, OOD_ADMIN only
 ```
 
 | File | What |
@@ -51,18 +51,28 @@ Nodes it can't reach are skipped. Rerun it when they're back.
 
 ## The OOD app: Cluster monitor
 
-Interactive Apps → Cluster monitor, and a card under Data & Cluster on the home page, for every user. Read-only. It refreshes every 30 s (not while the tab is hidden).
+Interactive Apps → Cluster monitor, and a card in the Admin section of the home page, for `OOD_ADMIN` only (its folder is readable by that account's group alone, like the Admin page; for anyone else it's not in the menu and not reachable by URL). Read-only. It refreshes every 30 s (not while the tab is hidden).
 
-- **Top:** problems right now (Prometheus' firing alerts), then nodes working, GPUs free by type, CPUs reserved, jobs,
-  and GPUs that jobs reserved but don't use.
+- **Problems** (both tabs): Prometheus' firing alerts, most harm first (critical, then services, nodes, GPUs,
+  certificates), an icon per kind, **Show** (opens the node or the Services tab) and **How to fix** (its row in "Alerts:
+  what to do", via `RUNBOOK_URL`).
+- **Nodes tab, top:** nodes working, GPUs free by type, CPUs reserved, jobs, GPUs reserved but idle, and services
+  answering (click: Services tab).
 - **At a glance** (more than 8 nodes): one square per node, by type, coloured by load. Click one for its details.
 - **Nodes:** a table (more than 8 nodes) or cards. Search by node, user or reason; filter by type, state, "has a free
   GPU"; sort by any column; problems first by default. One square per GPU: empty = free, filled = reserved (colour =
   how busy it really is), grey = not available.
-- **Side panel** per node: CPU and memory reserved vs in use, each GPU, the last hour, who runs what there.
-- **Links:** filters and the open node are in the URL, e.g. `.../cluster_status/#type=A30&free=1` or `#node=cn02`.
+  A ⚠ next to a node: a faulty GPU (memory errors, needs a reset, slowed down), a missing GPU (dashed square: Slurm has
+  it, the node doesn't see it), or a core service not running there.
+- **Side panel** per node: what needs attention (each with How to fix), CPU and memory reserved vs in use, each GPU and
+  its health, the last hour, who runs what there.
+- **Services tab:** one sentence first ("Everything is answering", or what is down and what that breaks); the services
+  people connect to (portal, sign-in, LDAP, MLflow, registry, gateway) with OK / Down, since when, response time and
+  certificate days left (amber < 30, red < 7); the core services on each node (`MONITOR_UNITS`) with the nodes they
+  run on, down ones first; the monitoring's own health (settings loaded, alert rules, collectors, service checks).
+- **Links:** tab, filters and the open node are in the URL, e.g. `#tab=services`, `#type=A30&free=1` or `#node=cn02`.
 
-`passenger_wsgi.py` makes one Prometheus query per refresh (plus `alerts`), and the last-hour history only for the
+`passenger_wsgi.py` makes one Prometheus query per refresh (plus `alerts` and `rules`), and the last-hour history only for the
 node someone opens. It never takes a query from the browser: the only value from the URL (a node name) is checked.
 
 ## For apps: how to read it
