@@ -71,3 +71,31 @@ tests:
         eval_time: 1m
         exp_samples:
           - {labels: 'slurm:node_gpus_free{node="cn01",slurm_node="cn01"}', value: 1}
+
+  - interval: 1m
+    input_series:
+      - {series: 'probe_success{service="ldap",instance="master:636",job="blackbox"}', values: '1 0x5'}
+      - {series: 'probe_success{service="ood",instance="https://master/",job="blackbox"}', values: '1x5'}
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ServiceUnreachable
+        exp_alerts:
+          - exp_labels: {severity: critical, service: ldap, instance: "master:636", job: blackbox}
+            exp_annotations: {summary: "ldap doesn't answer (master:636)"}
+
+  - interval: 1m                               # time() starts at 0: the value = seconds the certificate has left
+    input_series:
+      - {series: 'probe_ssl_earliest_cert_expiry{service="ood",instance="https://master/"}', values: '1728000x150'}  # 20 days
+      - {series: 'probe_ssl_earliest_cert_expiry{service="ldap",instance="master:636"}', values: '259200x150'}      # 3 days
+      - {series: 'probe_ssl_earliest_cert_expiry{service="gateway",instance="https://gw/"}', values: '34560000x150'} # 400 days
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: CertificateExpiresSoon
+        exp_alerts:
+          - exp_labels: {severity: warning, service: ood, instance: "https://master/"}
+            exp_annotations: {summary: "ood certificate expires in 19d 22h 0m 0s (https://master/)"}
+      - eval_time: 2h
+        alertname: CertificateExpiresVerySoon
+        exp_alerts:
+          - exp_labels: {severity: critical, service: ldap, instance: "master:636"}
+            exp_annotations: {summary: "ldap certificate expires in 2d 22h 0m 0s (master:636): renew it now"}

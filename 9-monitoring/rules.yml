@@ -51,6 +51,24 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "{{ $labels.name }} on {{ $labels.node }} is not running (systemctl status {{ $labels.name }})"
+      - alert: ServiceUnreachable             # blackbox_exporter can't reach it (job blackbox in prometheus.yml)
+        expr: probe_success == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.service }} doesn't answer ({{ $labels.instance }})"
+      - alert: CertificateExpiresSoon         # OOD, LDAP, gateway (self-signed: nobody renews them for us)
+        expr: 7 * 86400 <= probe_ssl_earliest_cert_expiry - time() < 30 * 86400
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.service }} certificate expires in {{ $value | humanizeDuration }} ({{ $labels.instance }})"
+      - alert: CertificateExpiresVerySoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 7 * 86400
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.service }} certificate expires in {{ $value | humanizeDuration }} ({{ $labels.instance }}): renew it now"
       - alert: SlurmNodeUnavailable           # down, drained, not responding...: takes no new jobs
         expr: (slurm_node_available == 0) * on (slurm_node) group_left (state, reason) slurm_node_info
         for: 10m

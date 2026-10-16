@@ -46,13 +46,20 @@ def gpu_idx(gres_used):
     return sorted(set(out))
 
 
-def hosts(nodelist, cache={}):
-    """'cn[01-02]' -> ['cn01', 'cn02'] (Slurm expands it; cached: the same lists come back every run)"""
-    if "[" not in nodelist:
-        return [n for n in nodelist.split(",") if n]
-    if nodelist not in cache:
-        cache[nodelist] = slurm("scontrol", "show", "hostnames", nodelist).split()
-    return cache[nodelist]
+def hosts(nodelist):
+    """'cn[01-02,7],gpu1' -> ['cn01', 'cn02', 'cn7', 'gpu1']: Slurm's hostlist syntax, expanded here (one
+    `scontrol show hostnames` per job each run would load slurmctld as jobs grow). Zero padding kept; several [] ok."""
+    out = []
+    for name in re.findall(r"(?:[^,\[]|\[[^\]]*\])+", nodelist or ""):
+        m = re.search(r"\[([^\]]*)\]", name)
+        if not m:
+            out.append(name)
+            continue
+        for part in m.group(1).split(","):
+            a, _, b = part.partition("-")
+            for i in range(int(a), int(b or a) + 1):
+                out += hosts(f"{name[:m.start()]}{i:0{len(a)}d}{name[m.end():]}")
+    return out
 
 
 def esc(v):
@@ -158,6 +165,8 @@ def test():
     assert gpu_types("gpu:h100:2(S:0),gpu:a30:1") == "a30+h100" and gpu_types("gpu:2") == "" and gpu_types(None) == ""
     assert gpu_idx("gpu:h100:3(IDX:0-1,4)") == [0, 1, 4] and gpu_idx("gpu:a30:0(IDX:N/A)") == [] and gpu_idx("") == []
     assert gpu_idx("gpu:a30:1(IDX:0),gpu:h100:2(IDX:2-3)") == [0, 2, 3]
+    assert hosts("cn[01-03,07],gpu1") == ["cn01", "cn02", "cn03", "cn07", "gpu1"] and hosts("") == []
+    assert hosts("r[1-2]n[09-10]") == ["r1n09", "r1n10", "r2n09", "r2n10"] and hosts("cn[8-10]") == ["cn8", "cn9", "cn10"]
     assert t.count("# TYPE slurm_node_cpus gauge") == 1                                  # one header per metric
     print("ok")
 

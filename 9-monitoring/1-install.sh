@@ -5,6 +5,7 @@
 #                   (MONITOR_UNITS: running or not), plus files from
 #   gpu-metrics     every node Slurm lists GPUs on, every 15 s: nvidia-smi -> use, memory, temperature, power
 #   slurm-metrics   master, every 30 s: scontrol/squeue -> node state, CPUs/RAM/GPUs reserved, jobs per user
+#   blackbox        master: OOD, LDAP, Keycloak, MLflow, registry, gateway answer? (systemd "active" isn't "answering")
 # Plain binaries + systemd, no containers, no k8s, no change to Slurm's config. Prometheus is read-only (no
 # admin/lifecycle API), port open to LOGIN_IP and master; node_exporter's to master only.
 # Installs what is ours (+ curl/python3/tar from dnf if missing). Only CHECKS what belongs to the cluster: Slurm,
@@ -21,6 +22,7 @@ export PATH="$SLURM_BIN:${SLURM_BIN%/bin}/sbin:$PATH" SLURM_CONF   # sudo drops 
 ETC=/etc/prometheus
 PROM_REL=prometheus-$PROMETHEUS_VERSION.linux-amd64
 NODE_REL=node_exporter-$NODE_EXPORTER_VERSION.linux-amd64
+BB_REL=blackbox_exporter-$BLACKBOX_VERSION.linux-amd64
 nodes=$(printf '%s\n' "$MASTER_HOST" $LOGIN_NODES $COMPUTE_NODES | awk '!seen[$0]++')
 missed=()
 on() {  # on <node> <script> [VAR=value ...]: run the script as root there (locally on this host); false if unreachable
@@ -63,6 +65,7 @@ fetch() {  # fetch <repo> <release dir> <version> <sha256>: a tarball already in
 install -d -m 755 "$MONITOR_ROOT" "$MONITOR_ROOT/collectors"
 fetch prometheus "$PROM_REL" "$PROMETHEUS_VERSION" "$PROMETHEUS_SHA256"
 fetch node_exporter "$NODE_REL" "$NODE_EXPORTER_VERSION" "$NODE_EXPORTER_SHA256"
+fetch blackbox_exporter "$BB_REL" "$BLACKBOX_VERSION" "$BLACKBOX_SHA256"
 install -m 755 "$HERE/gpu-metrics.sh" "$HERE/slurm-metrics.py" "$MONITOR_ROOT/collectors/"
 chmod -R a+rX "$MONITOR_ROOT"
 
@@ -88,10 +91,59 @@ put() {  # put <file>: stdin -> $ETC/<file>; prints "<file> " if it changed
   [ "$(cat "$ETC/$1" 2>/dev/null)" = "$new" ] || { printf '%s\n' "$new" > "$ETC/$1"; printf '%s ' "$1"; }
   chmod 644 "$ETC/$1"
 }
+
+# blackbox_exporter: Prometheus hands it a URL (job blackbox below), it tries it like a user would.
+# Any certificate is accepted (ours are self-signed); its expiry is still measured.
+bb=
+cmp -s "$MONITOR_ROOT/$BB_REL/blackbox_exporter" /usr/local/bin/blackbox_exporter ||
+  { install -m 755 "$MONITOR_ROOT/$BB_REL/blackbox_exporter" /usr/local/bin/blackbox_exporter; bb=1; }
+bb+=$(put blackbox.yml <<'EOF'
+# Written by OOD-Install/9-monitoring/1-install.sh (a rerun overwrites it).
+modules:
+  http_up:                  # answers with 2xx/3xx (OOD redirects to its login): redirects not followed
+    prober: http
+    timeout: 5s
+    http: {valid_status_codes: [200, 301, 302, 303, 307, 308], no_follow_redirects: true, tls_config: {insecure_skip_verify: true}}
+  tls_up:                   # TCP + TLS handshake (ldaps)
+    prober: tcp
+    timeout: 5s
+    tcp: {tls: true, tls_config: {insecure_skip_verify: true}}
+EOF
+)
+/usr/local/bin/blackbox_exporter --config.check --config.file="$ETC/blackbox.yml" >/dev/null 2>&1 ||
+  { echo "blackbox_exporter rejects $ETC/blackbox.yml" >&2; exit 1; }
+bb_unit=$(cat <<EOF
+# Written by OOD-Install/9-monitoring/1-install.sh. Prometheus (job blackbox) is its only caller.
+[Unit]
+Description=Prometheus blackbox exporter (are the cluster's services answering?)
+After=network-online.target
+
+[Service]
+DynamicUser=yes
+ExecStart=/usr/local/bin/blackbox_exporter --config.file=$ETC/blackbox.yml --web.listen-address=127.0.0.1:$BLACKBOX_PORT
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+)
+if [ "$(cat /etc/systemd/system/blackbox_exporter.service 2>/dev/null)" != "$bb_unit" ]; then
+  printf '%s\n' "$bb_unit" > /etc/systemd/system/blackbox_exporter.service; systemctl daemon-reload; bb+=unit
+fi
+systemctl enable -q blackbox_exporter
+if [ -n "$bb" ] || ! systemctl -q is-active blackbox_exporter; then systemctl restart blackbox_exporter; echo "blackbox_exporter (re)started"; fi
 # rules checked and tested HERE first: a broken rule stops the install before the running config is touched
 /usr/local/bin/promtool check rules "$HERE/rules.yml" "$HERE/node-alerts.yml" >/dev/null &&
   /usr/local/bin/promtool test rules "$HERE/rules_test.yml" >/dev/null ||
   { echo "Rules rejected (promtool test rules $HERE/rules_test.yml): nothing changed, Prometheus keeps running the old ones." >&2; exit 1; }
+missing=$(cat "$HERE/rules.yml" "$HERE/node-alerts.yml" | sed -n 's/^ *- *alert: *\([A-Za-z0-9]*\).*/\1/p' | sort -u |
+  while read -r a; do grep -qi "<a id=\"$a\">" "$HERE/README.md" || printf '%s ' "$a"; done)
+[ -z "$missing" ] || echo "WARNING: no row in README.md \"Alerts: what to do\" for: $missing(the alert's link leads nowhere)"
 changed=$(put rules.yml < "$HERE/rules.yml")
 changed+=$(put node-alerts.yml < "$HERE/node-alerts.yml")
 changed+=$(put prometheus.yml <<EOF
@@ -114,6 +166,22 @@ scrape_configs:
     static_configs: [{targets: [$(for n in $nodes; do printf "'%s:%s', " "$n" "$NODE_EXPORTER_PORT"; done | sed 's/, $//')]}]
     relabel_configs:
       - {source_labels: [__address__], regex: '([^:]+):[0-9]+', target_label: node}
+
+  # each service tried from here like a user would (blackbox_exporter): probe_success, probe_ssl_earliest_cert_expiry
+  - job_name: blackbox
+    metrics_path: /probe
+    static_configs:
+      - {targets: ['https://$LOGIN_HOST/'], labels: {service: ood, module: http_up}}
+      - {targets: ['${LDAP_URI#ldaps://}:636'], labels: {service: ldap, module: tls_up}}
+      - {targets: ['$KEYCLOAK_URL/realms/$KEYCLOAK_REALM'], labels: {service: keycloak, module: http_up}}
+      - {targets: ['$MLFLOW_URI/health'], labels: {service: mlflow, module: http_up}}
+      - {targets: ['http://$REGISTRY/v2/'], labels: {service: registry, module: http_up}}
+      - {targets: ['$GATEWAY_URL/healthz'], labels: {service: gateway, module: http_up}}
+    relabel_configs:
+      - {source_labels: [__address__], target_label: __param_target}
+      - {source_labels: [module], target_label: __param_module}
+      - {source_labels: [__address__], target_label: instance}
+      - {target_label: __address__, replacement: '127.0.0.1:$BLACKBOX_PORT'}
 EOF
 )
 /usr/local/bin/promtool check config --syntax-only "$ETC/prometheus.yml" >/dev/null &&
@@ -194,4 +262,5 @@ echo
 echo "Apps read: $PROM_URL/api/v1/query?query=node:cpu_used:ratio   (named queries: $ETC/rules.yml)"
 echo "Web UI:    $PROM_URL (from $LOGIN_HOST, or ssh -L $PROM_PORT:$MASTER_IP:$PROM_PORT)"
 echo "Stop/start: systemctl stop|start prometheus   (data stays in $PROM_DATA)"
+echo "Service checks: $PROM_URL/targets?search=blackbox   (one row per service)"
 [ ${#missed[@]} -eq 0 ] || echo "SKIPPED (unreachable): ${missed[*]}. Rerun this script when they're back."

@@ -1,6 +1,6 @@
 # Cluster status improvement: plan to make monitoring production grade
 
-Status on 2026-10-16: **Phase 1 done (1.1–1.7).** Phase 2 needs the SMTP details below.
+Status on 2026-10-16: **Phase 1 and Phase 3 done.** Order now: Phase 3, UI (U.1–U.6), then Phase 2 (needs the SMTP details below).
 
 ## Why: what's missing today
 
@@ -80,10 +80,24 @@ Needed from the site: SMTP relay host, port, sender address, login (if any); adm
 
 | # | Change | Why |
 |---|---|---|
-| 3.1 | blackbox_exporter: OOD https, LDAP ldaps 636, Keycloak, MLflow `:30500`, registry `:5000`, gateway `GATEWAY_IP:443` | systemd can't see k8s pods; "active" isn't "answering" |
-| 3.2 | TLS certificate expiry alert (from blackbox) | Self-signed OOD and gateway certificates expire |
-| 3.3 | `runbook_url` on every alert → its row in the README symptom table | The email says what to do |
-| 3.4 | Expand Slurm node lists in Python (one call or none), with an assert in `--test` | slurmctld load stays flat as jobs grow |
+| 3.1 ✅ | blackbox_exporter: OOD https, LDAP ldaps 636, Keycloak, MLflow `:30500`, registry `:5000`, gateway `GATEWAY_IP:443` | systemd can't see k8s pods; "active" isn't "answering" |
+| 3.2 ✅ | TLS certificate expiry alert (from blackbox) | Self-signed OOD and gateway certificates expire |
+| 3.3 ✅ | README "Alerts: what to do": one row per alert with an anchor; link = `RUNBOOK_URL#<alertname lower case>` (site.conf), built by the UI (U.6) and the email template (Phase 2) instead of a `runbook_url` annotation on ~40 rules | The page and the email say what to do |
+| 3.4 ✅ | Expand Slurm node lists in Python (one call or none), with an assert in `--test` | slurmctld load stays flat as jobs grow |
+
+## UI: every check visible in the Cluster monitor (after Phase 3, before Phase 2)
+
+Rule: anything we watch must also show on the page, not only as an alert. Green "OK" when fine, a clear mark when
+not. One request per refresh stays (add the series to the app's one query).
+
+| # | Change | Shows | Source |
+|---|---|---|---|
+| U.1 | **Services tab**: one row per service: OK (green) / Down (red) / Not checked, since when, response time | OOD, LDAP, Keycloak, MLflow, registry, gateway answering; core systemd services per node (slurmctld, munge, sssd, httpd, …) | `probe_success`, `probe_duration_seconds` (3.1), `node_systemd_unit_state` (1.2) |
+| U.2 | Certificate column in the Services tab: days left, amber < 30, red < 7 | OOD, LDAP, gateway certificates | `probe_ssl_earliest_cert_expiry` (3.2) |
+| U.3 | GPU health in the node panel's GPU table: ECC errors, repair pending, slowed down; a badge on the node when any is set | Per GPU | `gpu_ecc_errors_uncorrected`, `gpu_remapped_rows_pending`, `gpu_hw_slowdown` (1.4) |
+| U.4 | Missing GPU marked on the node ("Slurm 2, seen 1") | Per node | `GpuMissing` (1.4) |
+| U.5 | Monitoring health line: Prometheus config OK, rules OK, collectors fresh | Bottom of the page | `prometheus_config_last_reload_successful`, rule failures (1.6), stale files (1.5, done) |
+| U.6 | Problems box: icon per alert family (service, certificate, GPU, disk), link to its row in the Services tab or node panel | Top of the page | firing alerts |
 
 ## Phase 4: features (separate track)
 

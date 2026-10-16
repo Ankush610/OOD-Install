@@ -98,6 +98,49 @@ There's no password. OOD apps run as the logged-in user, so every user could rea
 The data is usage and job counts, which users can already see with `squeue` and `sinfo`.
 The admin and lifecycle APIs are off, so nobody can change or delete anything through the port.
 
+## Alerts: what to do
+
+Every alert, what it means, what to do. Each row has an anchor named after the alert in lower case, so a link can be
+built from the alert's name: `$RUNBOOK_URL#<alertname, lower case>` (`RUNBOOK_URL` in `site.conf`). The Cluster
+monitor and the alert emails link here that way.
+
+| Alert | Severity | Means | Do |
+|---|---|---|---|
+| <a id="targetdown"></a>`TargetDown` | critical | A node is off/unreachable, or its node_exporter (or blackbox_exporter) stopped | `ping <node>`; `ssh <node> systemctl status node_exporter`; when back, rerun `1-install.sh` (it was skipped). Planned downtime: drain it in Slurm |
+| <a id="servicedown"></a>`ServiceDown` | critical | A core service (`MONITOR_UNITS`) stopped or failed | `ssh <node> systemctl status <name>`; `journalctl -u <name> -n 50`; `systemctl start <name>`. LDAP (`dirsrv@*`) or sssd down = nobody can log in |
+| <a id="serviceunreachable"></a>`ServiceUnreachable` | critical | A service doesn't answer the way a user calls it, even if systemd says active | Open the URL in the alert from master. OOD/Keycloak: `systemctl status httpd keycloak`. MLflow/gateway: `kubectl get pods -n mlflow` / `-n model-hub`. Registry: `curl http://master:5000/v2/`, `podman ps`. LDAP: `systemctl status dirsrv@*` |
+| <a id="certificateexpiressoon"></a>`CertificateExpiresSoon` | warning | A certificate (OOD, LDAP, gateway) runs out within 30 days | Plan the renewal: OOD `2-ood/setup-ood.sh` (self-signed), gateway `5-model-hub/8-gateway.sh`, LDAP `1-ldap/1-server.sh`. Customer certs: ask them for a new one |
+| <a id="certificateexpiresverysoon"></a>`CertificateExpiresVerySoon` | critical | Under 7 days left | Renew now (same scripts as above); after it expires browsers and `ldaps` clients refuse to connect |
+| <a id="slurmnodeunavailable"></a>`SlurmNodeUnavailable` | warning | A Slurm node is down, drained or not responding: takes no jobs | `scontrol show node <node>` (Reason=); fix, then `scontrol update nodename=<node> state=resume` |
+| <a id="collectorfailing"></a>`CollectorFailing` | warning | nvidia-smi or scontrol/squeue fails inside a collector | `journalctl -u gpu-metrics -n 20` (GPU nodes) or `-u slurm-metrics` (master); `ssh <node> nvidia-smi` |
+| <a id="collectorstale"></a>`CollectorStale` | warning | A collector's file stopped updating (timer off or killed) | `systemctl list-timers gpu-metrics.timer slurm-metrics.timer`; `systemctl start <name>.timer` |
+| <a id="gpueccerrors"></a>`GpuEccErrors` | critical | Uncorrectable GPU memory errors: jobs on it can crash or compute garbage | Drain the node (`scontrol update nodename=<node> state=drain reason=ecc`), wait for jobs, `nvidia-smi -r -i <gpu>`; again after a reset = replace the card |
+| <a id="gpuremappending"></a>`GpuRemapPending` | warning | A bad memory row is replaced at the next GPU reset | When the GPU is idle: drain, `nvidia-smi -r -i <gpu>`, resume. Not urgent |
+| <a id="gputhrottled"></a>`GpuThrottled` | warning | Hardware slowed the GPU down (power brake or heat) | `nvidia-smi -q -d PERFORMANCE,TEMPERATURE,POWER` on the node; check airflow, PSU, power cables |
+| <a id="gpumissing"></a>`GpuMissing` | critical | Slurm has more GPUs on a node than nvidia-smi sees: a card fell off the bus | `nvidia-smi`; `dmesg | grep -i xid`; drain and reboot the node; still missing = reseat or replace the card |
+| <a id="gpuhot"></a>`GpuHot` | warning | GPU above 85 °C for 10 min | Check fans and room cooling; `nvidia-smi -q -d TEMPERATURE` |
+| <a id="prometheusbadconfig"></a>`PrometheusBadConfig` | critical | Prometheus rejected a new config: still running the old one | `promtool check config /etc/prometheus/prometheus.yml`; `journalctl -u prometheus -n 50`; fix and rerun `1-install.sh` |
+| <a id="prometheusrulefailures"></a>`PrometheusRuleFailures` | critical | A rule errors on every evaluation: its alert can't fire | `journalctl -u prometheus | grep 'Evaluating rule failed'` shows the rule and error; fix it in `rules.yml`, add a case to `rules_test.yml` |
+| <a id="prometheustsdbcompactionsfailing"></a>`PrometheusTSDBCompactionsFailing` | warning | Prometheus can't merge its data blocks | Disk space under `PROM_DATA` (`df -h /var/lib/prometheus`); `journalctl -u prometheus -n 50` |
+| <a id="nodefilesystemspacefillingup"></a>`NodeFilesystemSpaceFillingUp` | warning/critical | A local disk (`/`, master's `/home`) will be full within 24 h (warning) or 4 h (critical) at this rate | `du -xh --max-depth=2 <mountpoint> | sort -h | tail`; on `/home` look for big user folders, old SIFs, `/home/apps/registry` |
+| <a id="nodefilesystemalmostoutofspace"></a>`NodeFilesystemAlmostOutOfSpace` | warning/critical | Under 5 % (warning) / 3 % (critical) left | Same as above, now |
+| <a id="nodefilesystemfilesfillingup"></a>`NodeFilesystemFilesFillingUp` | warning/critical | Inodes (number of files) running out | `find <mountpoint> -xdev -type f | cut -d/ -f1-4 | sort | uniq -c | sort -n | tail` (millions of small files, e.g. datasets, caches) |
+| <a id="nodefilesystemalmostoutoffiles"></a>`NodeFilesystemAlmostOutOfFiles` | warning/critical | Under 5 % / 3 % of inodes left | Same as above, now |
+| <a id="nodenetworkreceiveerrs"></a>`NodeNetworkReceiveErrs` | warning | Receive errors on an interface | `ip -s link show <device>`; cable, switch port, NIC |
+| <a id="nodenetworktransmiterrs"></a>`NodeNetworkTransmitErrs` | warning | Transmit errors on an interface | Same as above |
+| <a id="nodehighnumberconntrackentriesused"></a>`NodeHighNumberConntrackEntriesUsed` | warning | Connection-tracking table 75 % full (k8s nodes) | `sysctl net.netfilter.nf_conntrack_max`; raise it, or find who opens so many connections |
+| <a id="nodetextfilecollectorscrapeerror"></a>`NodeTextFileCollectorScrapeError` | warning | node_exporter can't read a collector file | `ls -l /var/lib/node_exporter/textfile/`; `curl -s localhost:9100/metrics | grep textfile` |
+| <a id="nodeclockskewdetected"></a>`NodeClockSkewDetected` | warning | Clock off by more than 0.05 s | `chronyc tracking`; `systemctl status chronyd`. Munge (Slurm) and Kerberos/LDAP TLS break with bad clocks |
+| <a id="nodeclocknotsynchronising"></a>`NodeClockNotSynchronising` | warning | Clock not syncing at all | `chronyc sources`; NTP server reachable? |
+| <a id="noderaiddegraded"></a>`NodeRAIDDegraded` | critical | A RAID array (master: md126) lost a disk | `cat /proc/mdstat`; `mdadm --detail /dev/<device>`; replace the disk now: one more failure = data loss |
+| <a id="noderaiddiskfailure"></a>`NodeRAIDDiskFailure` | warning | A disk in a RAID array failed | Same as above |
+| <a id="nodefiledescriptorlimit"></a>`NodeFileDescriptorLimit` | warning/critical | The kernel's open-file limit is 70 % / 90 % used | `cat /proc/sys/fs/file-nr`; `lsof | awk '{print $1}' | sort | uniq -c | sort -n | tail` |
+| <a id="nodememorymajorpagesfaults"></a>`NodeMemoryMajorPagesFaults` | warning | Heavy swapping / page-ins: the node crawls | `vmstat 1`; which job: `squeue -w <node>`, `top -o RES` |
+| <a id="nodememoryhighutilization"></a>`NodeMemoryHighUtilization` | warning | RAM over 90 % for 15 min | `squeue -w <node>`, `top -o RES`; a job without a memory limit? (Slurm `--mem`) |
+| <a id="nodediskiosaturation"></a>`NodeDiskIOSaturation` | warning | Disk I/O queue high for 30 min | `iostat -x 1`; on master: NFS load from many jobs at once |
+| <a id="nodesystemdservicecrashlooping"></a>`NodeSystemdServiceCrashlooping` | warning | A systemd service keeps restarting | `systemctl status <name>`; `journalctl -u <name> -n 100` |
+| <a id="nodebondingdegraded"></a>`NodeBondingDegraded` | warning | A bonded network link lost a member | `cat /proc/net/bonding/<master>`; cable/switch port |
+
 ## Symptom | Cause | Fix
 
 | Symptom | Cause | Fix |
