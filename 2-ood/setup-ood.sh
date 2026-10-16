@@ -210,13 +210,23 @@ dashboard_layout:
           widgets: [ai_tools]
 # top bar: no Jobs, My Interactive Sessions, All Apps. Interactive Apps = every app in subcategory "Servers"
 # (Jupyter, VS Code, MLflow, Model Hub, and any new one), so OOD's Desktop (subcategory "Desktops") is left out.
+# OOD renders this file with ERB inside each user's own dashboard process, so ${OOD_ADMIN} gets its own menu: its
+# apps on top and, like its home page cards, no MLflow/Model Hub (LDAP logins). ponytail: ${OOD_ADMIN}'s list is
+# explicit, so a new user app needs adding here for it.
 nav_bar:
   - files
   - clusters
   - title: "Interactive Apps"
     links:
+<%- require "etc"; if Etc.getpwuid(Process.uid).name == "${OOD_ADMIN}" -%>
+      - group: "Admin"
+      - apps: ["sys/aistack_admin", "sys/cluster_status"]
+      - group: "Servers"
+      - apps: ["sys/jupyter", "sys/vscode"]
+<%- else -%>
       - group: "Servers"
       - apps: [{ category: "Interactive Apps", subcategory: "Servers" }]
+<%- end -%>
 YML
 
 echo "== 9. Start web server, open https"

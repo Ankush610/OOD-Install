@@ -219,3 +219,15 @@ Not a Model Hub step, but the deploy form (free GPUs, "over your GPU limit") and
   - To apply on a running cluster: rerun `9-monitoring/2-install-ood-app.sh` on `LOGIN_HOST` (rewrites `site.json`),
     then Restart Web Server.
   - A new alert needs its anchored row in the docs page, or its How to fix lands at the top of the page.
+- **Node detail: popup instead of side panel; GPU meters.** The 520 px side panel squeezed the GPU table, and GPU
+  in use / memory were plain numbers while CPU/memory had meters. Now a Bootstrap modal (`modal-lg`, full screen
+  below 576 px), CPU and Memory side by side, and each GPU row shows In use and Memory as the same `mini()` meters
+  (memory turns amber > 85 %, red > 95 %, like node memory). GPUs stay a table, one row per GPU (8 per node in
+  production). Checked with headless Firefox on live data + a fake 8-GPU node: 1650 px and 420 px.
+- **Portal for the admin account:** home page Admin section (Admin Panel, Cluster monitor) moved to the top; it is
+  still hidden for everyone else. Interactive Apps now matches the home page: `ondemand.d/ai-factory.yml` is
+  rendered by OOD with ERB inside each user's own dashboard process (`read_config` in `configuration_singleton.rb`), so
+  an `if Etc.getpwuid(Process.uid).name == OOD_ADMIN` gives `OOD_ADMIN` its own list: group Admin (aistack_admin,
+  cluster_status), then Servers (jupyter, vscode); no MLflow/Model Hub (LDAP logins). Everyone else keeps the
+  subcategory "Servers" list. Checked by rendering the deployed yml as `admin` and as `narmada`. Gotcha: a broken ERB
+  makes OOD skip the whole file (branding too), so render it before deploying.

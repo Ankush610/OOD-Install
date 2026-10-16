@@ -2,7 +2,8 @@
   Home page: our tools as cards, in sections. setup-ood.sh (step 8) installs this as an OOD dashboard widget
   (/etc/ood/config/apps/dashboard/views/widgets/) and shows it through dashboard_layout in ondemand.d/ai-factory.yml.
   Apps come from OOD's own list (SysRouter.apps), so a card links where the top bar does, and only shows when the
-  user may open the app: the Admin section stays hidden for everyone but the admin account. Look: ai-factory.css.
+  user may open the app: the Admin section (first, so the admin sees it on top) stays hidden for everyone but the
+  admin account. Look: ai-factory.css.
   ${OOD_ADMIN} is filled in by setup-ood.sh (envsubst).
 -%>
 <%-
@@ -10,6 +11,12 @@
   # colour = class icon-<colour> in ai-factory.css (not inline style: OOD's CSP can block style attributes)
   # icons: Bootstrap Icons, the same as each app's own top bar (Model Hub's copy, installed by setup-ood.sh)
   sections = [
+    ["Admin", "shield-lock", "admin-only", [
+      ["aistack_admin", "Admin Panel", "shield-lock", "green", "Cluster administration",
+       "Monitor GPU usage across the cluster and manage users, teams and resource limits."],
+      ["cluster_status", "Cluster monitor", "hdd-rack", "coral", "Nodes, GPUs, services and alerts",
+       "What's free and busy on every node, whether every service answers, and what to fix: live, with problems flagged."],
+    ]],
     ["Develop", "code-slash", "", [
       ["jupyter", "Jupyter", "journal-code", "orange", "JupyterLab on the cluster",
        "Interactive notebooks on GPU nodes, with your home directory and datasets already in place."],
@@ -27,12 +34,6 @@
     ["Data & Cluster", "hdd-stack", "", [
       ["files", "Files", "folder2-open", "yellow", "Home and scratch storage",
        "Browse, upload and manage files in your home and scratch directories."],
-    ]],
-    ["Admin", "shield-lock", "admin-only", [
-      ["aistack_admin", "Admin Panel", "shield-lock", "green", "Cluster administration",
-       "Monitor GPU usage across the cluster and manage users, teams and resource limits."],
-      ["cluster_status", "Cluster monitor", "hdd-rack", "coral", "Nodes, GPUs, services and alerts",
-       "What's free and busy on every node, whether every service answers, and what to fix: live, with problems flagged."],
     ]],
   ]
   apps = SysRouter.apps.index_by(&:name)
